@@ -1,0 +1,129 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Plectrum.ai</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&family=Great+Vibes&family=JetBrains+Mono:wght@400;700&family=Cinzel:wght@400;700;900&display=swap');
+      
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #4a2c20;
+        color: #fff8e1;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        
+        background-image: 
+          repeating-radial-gradient(circle at 0 0, transparent 0, #4a2c20 10px),
+          repeating-linear-gradient(#5d403755, #5d403755),
+          url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.5' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.05'/%3E%3C/svg%3E");
+      }
+      
+      .wood-panel {
+        background: linear-gradient(135deg, #5d4037 0%, #3e2723 100%);
+        box-shadow: 
+          inset 0 1px 0 rgba(255,255,255,0.1),
+          inset 0 0 20px rgba(0,0,0,0.3), 
+          0 10px 20px rgba(0,0,0,0.4);
+        border: 1px solid #795548;
+      }
+
+      .font-display {
+        font-family: 'Outfit', sans-serif;
+      }
+
+      .font-cursive {
+        font-family: 'Great Vibes', cursive;
+      }
+      
+      .font-mono {
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .font-sans {
+        font-family: 'Inter', sans-serif;
+      }
+
+      /* Smooth global transitions */
+      * {
+        transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+        transition-duration: 200ms;
+      }
+
+      /* Only transition these properties by default */
+      button, a, input, [class*="hover:"] {
+        transition-property: color, background-color, border-color, opacity, box-shadow, transform, filter, backdrop-filter;
+      }
+
+      button:active {
+        transform: scale(0.96);
+      }
+
+      @keyframes vibrate {
+        0% { transform: translateX(0); }
+        25% { transform: translateX(0.5px); }
+        50% { transform: translateX(-0.5px); }
+        75% { transform: translateX(0.5px); }
+        100% { transform: translateX(0); }
+      }
+
+      .animate-vibrate {
+        animation: vibrate 0.05s linear infinite;
+      }
+
+      /* Glassmorphic Scrollbar */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.12); 
+        border-radius: 99px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(255,255,255,0.25); 
+      }
+
+      .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+
+      /* Custom animation utilities */
+      @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-6px); }
+      }
+      .animate-float {
+        animation: float 3s ease-in-out infinite;
+      }
+
+      @keyframes glow-pulse {
+        0%, 100% { opacity: 0.4; }
+        50% { opacity: 0.8; }
+      }
+      .animate-glow {
+        animation: glow-pulse 2s ease-in-out infinite;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

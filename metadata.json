@@ -1,0 +1,8 @@
+{
+  "name": "Plectrum.ai",
+  "description": "A comprehensive guitarist's companion app featuring a song library, smart teleprompter with voice tracking, AI-powered tab analysis, and a musical chatbot assistant.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

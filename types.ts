@@ -1,0 +1,82 @@
+
+export type InstrumentType = 'Guitar';
+export type Handedness = 'Right' | 'Left';
+export type AppLanguage = 'English' | 'Hindi' | 'Bengali' | 'Telugu' | 'Marathi' | 'Tamil' | 'Urdu' | 'Gujarati' | 'Kannada' | 'Malayalam' | 'Odia' | 'Punjabi' | 'Assamese' | 'Maithili';
+export type SkillLevel = 'Beginner' | 'Intermediate' | 'Advanced' | 'Professional';
+
+export interface User {
+  id: string;
+  name: string;
+  skillLevel: SkillLevel;
+  subscriptionStatus: 'trial' | 'active' | 'expired';
+  trialEndDate: number;
+  isAdmin?: boolean;
+}
+
+export interface Song {
+  id: string;
+  title: string;
+  artist: string;
+  movie?: string;
+  releaseDate?: string;
+  content: string; // Text format with [Chords]
+  key?: string;
+  recommendedKey?: string;
+  capo?: number;
+  strummingPattern?: string;
+  difficulty?: 'Beginner' | 'Intermediate' | 'Advanced' | string;
+  practiceTips?: string[];
+  chordSimplifications?: { from: string; to: string; reason?: string }[];
+  duration?: number;
+  karaokeUrl?: string; // YouTube URL for backing track
+  language?: AppLanguage; // Lyric script/transliteration target
+  timedLyrics?: {      // For karaoke sync
+    time: number;
+    text: string;
+    chords?: string[];
+  }[];
+  createdAt: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'model';
+  text: string;
+  timestamp: number;
+}
+
+export type ViewState = 'AUTH' | 'SUBSCRIPTION' | 'ONBOARDING' | 'LIBRARY' | 'EDITOR' | 'TELEPROMPTER' | 'CHAT' | 'ANALYZER' | 'CHORD_TRAINER' | 'FRETBOARD_LAB' | 'PRACTICE_ROOM';
+
+export interface ViewProps {
+  changeView: (view: ViewState, data?: any) => void;
+}
+
+export interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  onerror: (event: any) => void;
+}
+
+export interface SpeechRecognitionEvent {
+  results: SpeechRecognitionResultList;
+}
+
+export interface SpeechRecognitionResultList {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+export interface SpeechRecognitionResult {
+  isFinal: boolean;
+  [0]: SpeechRecognitionAlternative;
+}
+
+export interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
