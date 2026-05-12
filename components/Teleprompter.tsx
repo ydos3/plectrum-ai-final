@@ -222,7 +222,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
     const target = currentTarget + ((nextTarget ?? currentTarget) - currentTarget) * progress;
     const container = scrollContainerRef.current;
-    container.scrollTop += (target - container.scrollTop) * 0.18;
+    
+    // Instead of container.scrollTop += (target - container.scrollTop) * 0.18 which can stall on mobile due to rounding,
+    // just directly set it or use a persistent float. Because progress linearly moves target, assigning target is smooth!
+    container.scrollTop = target;
   }, [getCenteredScrollTop, scrollToLine]);
 
   const getActiveLineForTime = useCallback((time: number, timings: number[]) => {
@@ -246,7 +249,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     let lastFrameTime = performance.now();
 
     const scrollLoop = (frameTime: number) => {
-      const deltaTime = Math.max(0, (frameTime - lastFrameTime) / 1000);
+      // Cap delta time to 100ms so backgrounding the tab doesn't instantly finish the song or skip huge chunks
+      const deltaTime = Math.min(Math.max(0, (frameTime - lastFrameTime) / 1000), 0.1);
       lastFrameTime = frameTime;
 
       const nextTime = currentTimeRef.current + (deltaTime * playbackSpeed);
@@ -298,20 +302,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => clearInterval(syncInterval);
   }, [karaokeEnabled, playerReady, syncOffset, activeLineIndex, scrollToTime, getLineTimings, getActiveLineForTime]);
 
-  useEffect(() => {
-    if (!karaokeEnabled || !playerReady || !playerRef.current?.setPlaybackRate) return;
-
-    const supportedRates = playerRef.current.getAvailablePlaybackRates?.() || [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
-    const closestRate = supportedRates.reduce((best: number, rate: number) => (
-      Math.abs(rate - playbackSpeed) < Math.abs(best - playbackSpeed) ? rate : best
-    ), supportedRates[0]);
-
-    try {
-      playerRef.current.setPlaybackRate(closestRate);
-    } catch (e) {
-      console.warn('Could not update YouTube playback speed', e);
-    }
-  }, [karaokeEnabled, playerReady, playbackSpeed]);
+  // Removed YouTube playback speed link to teleprompter speed
 
   // ─── YouTube Setup ─────────────────────────────────────────────────
 
