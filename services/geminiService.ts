@@ -2,7 +2,7 @@
 import { AppLanguage, SkillLevel } from "../types";
 import { searchLRCLIB, searchSongDatabase, normalizeSongSearchText } from "./songDatabaseService";
 import { transliterateLyricsForLanguage } from "./indicTransliterationService";
-import { getArrangementCacheKey, getCachedArrangement, saveArrangementToCache, searchCachedArrangement } from "./songArrangementCache";
+import { getArrangementCacheKey, getCachedArrangement, searchCachedArrangement } from "./songArrangementCache";
 
 // ─── Model Configuration ──────────────────────────────────────────────
 // Pro handles high-value generation and vision. Flash handles lightweight UX paths.
@@ -633,7 +633,6 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
 
   if (isLikelyUserProvidedLyrics(query)) {
     const arrangement = buildUserProvidedLyricsArrangement(query, language, practiceSkill);
-    await saveArrangementToCache(queryCacheKey, arrangement);
     return arrangement;
   }
   // STEP 1: Try database first (LRCLIB) — instant, no AI cost
@@ -658,8 +657,6 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
         ? 'Loaded verified lyrics from the lyrics database and generated a playable local arrangement instantly.'
         : `Loaded verified lyrics from the lyrics database and generated a local ${language} phonetic transcription instantly.`
     );
-    await saveArrangementToCache(queryCacheKey, instantArrangement);
-    await saveArrangementToCache(identityCacheKey, instantArrangement);
     return instantArrangement;
 
     // We have lyrics from DB. Now use Gemini Pro to add accurate chords.
