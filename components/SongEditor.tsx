@@ -1,12 +1,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Song, AppLanguage, SkillLevel } from '../types';
-import { saveSong, getSongs, findSongByTitle } from '../services/storageService';
+import { saveSong, getSongs } from '../services/storageService';
 import { generateSongFromTitle, getSongRecommendations, getSearchSuggestions } from '../services/geminiService';
-import { getArrangementCacheKey, saveArrangementToCache } from '../services/songArrangementCache';
 import { startListening, stopListening } from '../services/speechService';
 import { extractYouTubeVideoId } from '../services/youtubeService';
-import { Save, ArrowLeft, Mic, Sparkles, Wand2, Loader2, Merge, Link as LinkIcon, Clock, ChevronDown, ChevronUp, Database, Search, Music, PlayCircle, X, Split, Zap, ExternalLink } from 'lucide-react';
+import { Save, ArrowLeft, Mic, Sparkles, Wand2, Loader2, Merge, Link as LinkIcon, Clock, ChevronDown, ChevronUp, Search, Music, PlayCircle, X, Split, Zap, ExternalLink } from 'lucide-react';
 
 interface SongEditorProps {
     songToEdit?: Song;
@@ -84,7 +83,6 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
     const [magicInput, setMagicInput] = useState('');
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [showSuggestionsDropdown, setShowSuggestionsDropdown] = useState(false);
-    const [languageFallbackMessage, setLanguageFallbackMessage] = useState('');
     const [practiceSkillLevel, setPracticeSkillLevel] = useState<PracticeSkillLevel>(() => normalizeSkillLevel(userSkillLevel));
 
     // New Mashup State
@@ -111,7 +109,6 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             setDurationStr('');
             setKaraokeUrl('');
             setTimedLyrics(undefined);
-            setLanguageFallbackMessage('');
         } else {
             setTitle(songToEdit.title);
             setArtist(songToEdit.artist);
@@ -190,13 +187,13 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
     }, [isAiProcessing]);
 
     const getLoadingStatus = (p: number) => {
-        if (p < 15) return "Searching LRCLIB Database...";
-        if (p < 30) return "Scanning Song Libraries...";
-        if (p < 50) return "Extracting Official Lyrics...";
+        if (p < 15) return "Finding the song...";
+        if (p < 30) return "Checking the best match...";
+        if (p < 50) return "Preparing the chart...";
         if (p < 70) return "Harmonizing Chords with AI...";
         if (p < 85) return "Calculating Fret Positions...";
-        if (p < 95) return "Syncing Timestamps...";
-        return "Final Polish & Formatting...";
+        if (p < 95) return "Lining up the sections...";
+        return "Final polish...";
     };
 
     const handleApplyAiResult = (data: any, fromCache: boolean = false) => {
@@ -221,8 +218,6 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
                 if (data.karaokeUrl) setKaraokeUrl(data.karaokeUrl);
                 if (data.duration) setDurationStr(formatTime(data.duration));
                 setTimedLyrics(Array.isArray(data.timedLyrics) ? data.timedLyrics : undefined);
-                setLanguageFallbackMessage(data.languageFallbackReason || '');
-
                 setShowMagicTools(false);
                 setIsAiProcessing(false);
                 setShowMashupModal(false);
@@ -282,15 +277,6 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
 
     const runQuickPrompt = async (prompt: string, forceMashup: boolean = false) => {
         if (!prompt.trim()) return;
-
-        // Check local cache first
-        const cachedSong = findSongByTitle(prompt, selectedLanguage);
-        if (cachedSong && !forceMashup) {
-            if (window.confirm(`Found "${cachedSong.title}" in your library! Load it instantly?`)) {
-                handleApplyAiResult(cachedSong, true);
-                return;
-            }
-        }
 
         setIsAiProcessing(true);
         const isBarre = prompt.toLowerCase().includes('barre');
@@ -380,7 +366,6 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             createdAt: songToEdit?.createdAt || Date.now(),
         };
         saveSong(newSong);
-        saveArrangementToCache(getArrangementCacheKey(`${title} ${artist}`, selectedLanguage, practiceSkillLevel, title, artist || 'Unknown'), newSong);
         onSave();
     };
 
@@ -622,11 +607,6 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                 {/* Sidebar Controls */}
                 <div className="w-full md:w-80 bg-[#1a0f0a]/50 border-r border-[#5d4037] p-5 space-y-5 overflow-y-auto shrink-0 md:h-full h-auto border-b md:border-b-0 max-h-[40vh] md:max-h-full">
-                    {languageFallbackMessage && (
-                        <div className="rounded-xl border border-amber-600/40 bg-amber-950/40 p-3 text-xs text-amber-200">
-                            {languageFallbackMessage}
-                        </div>
-                    )}
                     <div>
                         <label className="text-[10px] uppercase font-bold text-amber-500 mb-1 block tracking-wider">Track Metadata</label>
                         <input value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-[#0f0a08]/40 border border-[#5d4037] focus:border-amber-500 text-amber-100 p-2.5 rounded-lg mb-2 placeholder-amber-900/50 outline-none transition-colors font-bold text-lg font-display" placeholder="Song Title" />

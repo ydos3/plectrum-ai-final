@@ -741,11 +741,6 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                             {song.strummingPattern}
                         </span>
                     )}
-                    {(song as any).source === 'database' && (
-                        <span className="text-[9px] px-2 py-0.5 bg-emerald-500/15 border border-emerald-500/20 rounded-full text-emerald-300 font-bold uppercase tracking-wider">
-                            ⚡ DB
-                        </span>
-                    )}
                 </div>
             </div>
         </div>

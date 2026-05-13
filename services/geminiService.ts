@@ -2,7 +2,6 @@
 import { AppLanguage, SkillLevel } from "../types";
 import { searchLRCLIB, searchSongDatabase, normalizeSongSearchText } from "./songDatabaseService";
 import { transliterateLyricsForLanguage } from "./indicTransliterationService";
-import { getArrangementCacheKey, getCachedArrangement, searchCachedArrangement } from "./songArrangementCache";
 
 // ─── Model Configuration ──────────────────────────────────────────────
 // Pro handles high-value generation and vision. Flash handles lightweight UX paths.
@@ -16,9 +15,9 @@ const isMissingApiKeyError = (error: unknown) => (
 );
 
 const MODELS = {
-  PRO: "gemini-3.1-pro-preview",          // Best available quality. Falls back to 2.5 Pro if unavailable.
+  PRO: "gemini-3.1-pro-preview",
   PRO_FALLBACK: "gemini-2.5-pro",
-  FLASH: "gemini-3.1-flash-preview",      // Fast identity/search work. Falls back to 2.5 Flash if unavailable.
+  FLASH: "gemini-3-flash-preview",        // Fast identity/search work. Falls back to 2.5 Flash if unavailable.
   FLASH_FALLBACK: "gemini-2.5-flash",
   GLM_FLASH: "glm-4-flash",             // Zhipu free fallback
 } as const;
@@ -84,19 +83,31 @@ async function retryWithBackoff<T>(
 // ─── Core API Call ────────────────────────────────────────────────────
 
 const callGeminiApi = async (model: string, contents: any[], config: any = {}) => {
-  const response = await fetch('/api/gemini', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      contents,
-      generationConfig: {
-        candidateCount: 1,
-        temperature: 0.2,
-        ...config
-      }
-    })
-  });
+  const { requestTimeoutMs, ...generationConfigInput } = config || {};
+  const controller = new AbortController();
+  const timeoutMs = requestTimeoutMs || (model === MODELS.PRO ? 30000 : 90000);
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+
+  try {
+    response = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        contents,
+        generationConfig: {
+          candidateCount: 1,
+          temperature: 0.2,
+          ...(model.includes('flash') ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+          ...generationConfigInput
+        }
+      })
+    });
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     let errorMessage = `Gemini API Error: ${response.status} ${response.statusText}`;
@@ -123,11 +134,15 @@ const callGeminiApi = async (model: string, contents: any[], config: any = {}) =
 };
 
 const shouldFallbackModel = (error: unknown) => {
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const message = error instanceof Error
+    ? `${error.name} ${error.message}`.toLowerCase()
+    : String(error).toLowerCase();
   return message.includes('not found') ||
     message.includes('unsupported') ||
     message.includes('not supported') ||
     message.includes('permission') ||
+    message.includes('abort') ||
+    message.includes('timeout') ||
     message.includes('model');
 };
 
@@ -385,8 +400,7 @@ const sectionTitleForLine = (line: string) => {
 const buildPlayableSongDraft = (
   dbResult: NonNullable<Awaited<ReturnType<typeof searchSongDatabase>>>,
   language: AppLanguage,
-  practiceSkill: SkillLevel,
-  reason: string
+  practiceSkill: SkillLevel
 ) => {
   const progression = practiceSkill === 'Beginner'
     ? ['G', 'D', 'Em', 'C']
@@ -429,7 +443,7 @@ const buildPlayableSongDraft = (
       : [],
     karaokeUrl: '',
     language,
-    languageFallbackReason: reason,
+    languageFallbackReason: '',
     content: contentLines.join('\n'),
     duration: dbResult.duration,
     timedLyrics: dbResult.syncedLyrics,
@@ -561,7 +575,7 @@ const isLikelyUserProvidedLyrics = (query: string) => {
   return lines.length >= 3 || wordCount >= 28;
 };
 
-const buildUserProvidedLyricsArrangement = (
+const buildUserProvidedLyricsArrangement = async (
   lyrics: string,
   language: AppLanguage,
   practiceSkill: SkillLevel
@@ -574,31 +588,91 @@ const buildUserProvidedLyricsArrangement = (
     duration: Math.max(90, Math.min(420, lyrics.split(/\s+/).length * 2.1))
   };
 
-  return buildPlayableSongDraft(
-    dbLikeResult,
-    language,
-    practiceSkill,
-    language === 'English'
-      ? 'Used user-provided lyrics directly, so Gemini did not need to reproduce copyrighted text.'
-      : `Used local ${language} phonetic transcription from user-provided lyrics, so Gemini did not need to reproduce copyrighted text.`
-  );
+  try {
+    const lyricLanguageRule = getLyricLanguageInstruction(language);
+    const prompt = `You are a professional guitar teacher and music transcriber.
+
+TASK: Add playable, musically sensible guitar chords to the user-provided lyrics below.
+OUTPUT LANGUAGE/SCRIPT: ${language}
+TARGET SKILL LEVEL: ${practiceSkill}
+
+Rules:
+- Preserve the user's lyric words and line breaks.
+- Put chords inline in [G] format directly before the word or syllable where the chord changes.
+- Add "### [Section]" headers when the section is obvious from the lyric structure.
+- If the title or artist is obvious from the text, set them. Otherwise use "Untitled Lyrics" and "User Provided".
+- ${lyricLanguageRule}
+- Return strict JSON only.
+
+{
+  "title": "Song Title",
+  "artist": "Artist Name",
+  "key": "e.g. G Major",
+  "recommendedKey": "e.g. G Major",
+  "capo": 0,
+  "strummingPattern": "D-DU-UDU",
+  "difficulty": "${practiceSkill}",
+  "skillLevel": "${practiceSkill}",
+  "practiceTips": ["short, practical tip"],
+  "chordSimplifications": [],
+  "karaokeUrl": "",
+  "language": "${language}",
+  "languageFallbackReason": "",
+  "content": "lyrics with [chords] inline"
+}
+
+USER-PROVIDED LYRICS:
+${lyrics}`;
+
+    const responseText = await retryWithBackoff(async () => {
+      return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
+        responseMimeType: "application/json",
+        temperature: 0.15,
+        maxOutputTokens: 8192
+      });
+    }, 2, 1200);
+
+    const data = normalizeContentField(parseGeminiJson(responseText));
+    if (!hasChordedContent(data.content)) {
+      throw new Error('Gemini response did not include playable chorded content.');
+    }
+
+    return {
+      title: data.title || 'Untitled Lyrics',
+      artist: data.artist || 'User Provided',
+      key: data.key || 'G Major',
+      recommendedKey: data.recommendedKey || data.key || 'G Major',
+      capo: typeof data.capo === 'number' ? data.capo : 0,
+      strummingPattern: data.strummingPattern || (practiceSkill === 'Beginner' ? 'D-DU-UDU' : 'D-D-U-U-D-U'),
+      difficulty: data.difficulty || practiceSkill,
+      skillLevel: data.skillLevel || practiceSkill,
+      practiceTips: Array.isArray(data.practiceTips) ? data.practiceTips : [],
+      chordSimplifications: Array.isArray(data.chordSimplifications) ? data.chordSimplifications : [],
+      karaokeUrl: data.karaokeUrl || '',
+      language,
+      languageFallbackReason: data.languageFallbackReason || '',
+      content: data.content,
+      duration: dbLikeResult.duration,
+      source: 'ai',
+    };
+  } catch (error) {
+    console.warn('[SongGen] Gemini chord pass for user lyrics failed, using local draft', error);
+    return buildPlayableSongDraft(
+      dbLikeResult,
+      language,
+      practiceSkill
+    );
+  }
 };
 
 const buildRecoverableSongWorkspace = (
   query: string,
   language: AppLanguage,
   practiceSkill: SkillLevel,
-  reason: string,
   identity?: SongIdentityResolution | null
 ) => {
   const displayTitle = identity?.title && identity.title !== query ? identity.title : query.trim();
   const displayArtist = identity?.artist && identity.artist !== 'Unknown' ? identity.artist : 'Unknown';
-  const body = [
-    '### [Lyrics Needed]',
-    `[G]${transliterateLyricsForLanguage(`Song: ${displayTitle}`, language)}`,
-    `[C]${transliterateLyricsForLanguage(displayArtist !== 'Unknown' ? `Artist: ${displayArtist}` : 'Artist: Unknown', language)}`,
-    `[D]${transliterateLyricsForLanguage('Paste lyrics here to instantly generate chords.', language)}`
-  ].join('\n');
 
   return {
     title: displayTitle || 'Untitled Song',
@@ -610,16 +684,16 @@ const buildRecoverableSongWorkspace = (
     difficulty: practiceSkill,
     skillLevel: practiceSkill,
     practiceTips: [
-      'Paste lyrics into this editor to generate a chorded version.',
-      'Try adding the exact artist name to the search if available.'
+      'Paste lyrics into the editor to generate a chorded version.',
+      'Add the artist name to narrow the search when a title has multiple matches.'
     ],
     chordSimplifications: [],
     karaokeUrl: '',
     language,
-    languageFallbackReason: reason,
+    languageFallbackReason: '',
     duration: 0,
     source: 'recoverable-search',
-    content: body
+    content: ''
   };
 };
 
@@ -627,7 +701,7 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
   const practiceSkill = normalizePracticeSkill(skillLevel);
   
   if (isLikelyUserProvidedLyrics(query)) {
-    const arrangement = buildUserProvidedLyricsArrangement(query, language, practiceSkill);
+    const arrangement = await buildUserProvidedLyricsArrangement(query, language, practiceSkill);
     return arrangement;
   }
   // STEP 1: Try database first (LRCLIB) — instant, no AI cost
@@ -640,19 +714,6 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
 
   if (dbResult && dbResult.plainLyrics) {
     console.log('[SongGen] Database hit! Using LRCLIB lyrics for:', dbResult.title);
-    const identityCacheKey = getArrangementCacheKey(query, language, practiceSkill, dbResult.title, dbResult.artist);
-    const identityCached = await getCachedArrangement(identityCacheKey);
-    if (identityCached) return identityCached;
-
-    const instantArrangement = buildPlayableSongDraft(
-      dbResult,
-      language,
-      practiceSkill,
-      language === 'English'
-        ? 'Loaded verified lyrics from the lyrics database and generated a playable local arrangement instantly.'
-        : `Loaded verified lyrics from the lyrics database and generated a local ${language} phonetic transcription instantly.`
-    );
-    return instantArrangement;
 
     // We have lyrics from DB. Now use Gemini Pro to add accurate chords.
     try {
@@ -660,7 +721,7 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
 
       const chordPrompt = `You are a professional music transcriber with decades of experience.
 
-TASK: Add accurate guitar chords and a practice-ready arrangement to the following lyrics for "${dbResult.title}" by "${dbResult.artist}". This is an educational, transformative musical analysis intended for fair use practice.
+TASK: Add accurate guitar chords and a practice-ready arrangement to the following lyrics for "${dbResult.title}" by "${dbResult.artist}".
 OUTPUT LANGUAGE/SCRIPT: ${language}
 TARGET SKILL LEVEL: ${practiceSkill}
 ${verifiedIdentity ? `CONFIRMED SONG IDENTITY: "${verifiedIdentity.title}" by "${verifiedIdentity.artist}". Use this exact song only.` : ''}
@@ -780,7 +841,7 @@ ${dbResult.plainLyrics}`;
           chordSimplifications: Array.isArray(fallbackData.chordSimplifications) ? fallbackData.chordSimplifications : [],
           karaokeUrl: fallbackData.karaokeUrl || '',
           language,
-          languageFallbackReason: fallbackData.languageFallbackReason || 'Used a compact AI fallback after the full chord/transliteration pass failed.',
+          languageFallbackReason: fallbackData.languageFallbackReason || '',
           content: fallbackData.content,
           duration: dbResult.duration,
           timedLyrics: dbResult.syncedLyrics,
@@ -791,8 +852,7 @@ ${dbResult.plainLyrics}`;
         return buildPlayableSongDraft(
           dbResult,
           language,
-          practiceSkill,
-          'Gemini chord/transliteration was temporarily unavailable, so Plectrum generated a playable draft from verified lyrics instead of failing.'
+          practiceSkill
         );
       }
     }
@@ -819,7 +879,7 @@ TARGET LANGUAGE/SCRIPT: ${langInstruction}
 TARGET SKILL LEVEL: ${practiceSkill}
 ${verifiedIdentity ? `CONFIRMED SONG IDENTITY: "${verifiedIdentity.title}" by "${verifiedIdentity.artist}". Use this exact song only.` : ''}
 
-TASK: Create a practice-ready guitar arrangement for this song. This is an educational, transformative musical analysis intended for fair use practice.
+TASK: Create a practice-ready guitar arrangement for this song.
 
 STRICT RULES — FOLLOW EXACTLY:
 
@@ -907,7 +967,6 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
       query,
       language,
       practiceSkill,
-      `Generation hit a model formatting issue, so Plectrum opened a safe workspace instead of failing. ${error instanceof Error ? error.message : String(error)}`,
       verifiedIdentity
     );
   }
@@ -917,7 +976,7 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
 
 export const completeSongFromLyrics = async (partialLyrics: string, language: AppLanguage = 'English'): Promise<any> => {
   if (partialLyrics.trim()) {
-    return buildUserProvidedLyricsArrangement(partialLyrics, language, 'Intermediate');
+    return await buildUserProvidedLyricsArrangement(partialLyrics, language, 'Intermediate');
   }
 
   try {
