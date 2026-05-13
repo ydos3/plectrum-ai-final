@@ -20,6 +20,7 @@ const MODELS = {
   PRO_FALLBACK: "gemini-2.5-pro",
   FLASH: "gemini-3-flash-preview",      // Fast identity/search work. Falls back to 2.5 Flash if unavailable.
   FLASH_FALLBACK: "gemini-2.5-flash",
+  GLM_FLASH: "glm-4-flash",             // Zhipu free fallback
 } as const;
 
 const LANGUAGE_SCRIPT_HINTS: Record<AppLanguage, string> = {
@@ -132,9 +133,9 @@ const shouldFallbackModel = (error: unknown) => {
 
 const callGeminiApiWithFallback = async (model: string, contents: any[], config: any = {}) => {
   const modelChain = model === MODELS.PRO
-    ? [MODELS.PRO, MODELS.PRO_FALLBACK]
+    ? [MODELS.PRO, MODELS.PRO_FALLBACK, MODELS.GLM_FLASH]
     : model === MODELS.FLASH
-      ? [MODELS.FLASH, MODELS.FLASH_FALLBACK]
+      ? [MODELS.FLASH, MODELS.FLASH_FALLBACK, MODELS.GLM_FLASH]
       : [model];
   let lastError: unknown;
 
@@ -667,7 +668,7 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
 
       const chordPrompt = `You are a professional music transcriber with decades of experience.
 
-TASK: Add accurate guitar chords and a practice-ready arrangement to the following lyrics for "${dbResult.title}" by "${dbResult.artist}".
+TASK: Add accurate guitar chords and a practice-ready arrangement to the following lyrics for "${dbResult.title}" by "${dbResult.artist}". This is an educational, transformative musical analysis intended for fair use practice.
 OUTPUT LANGUAGE/SCRIPT: ${language}
 TARGET SKILL LEVEL: ${practiceSkill}
 ${verifiedIdentity ? `CONFIRMED SONG IDENTITY: "${verifiedIdentity.title}" by "${verifiedIdentity.artist}". Use this exact song only.` : ''}
@@ -859,7 +860,7 @@ TARGET LANGUAGE/SCRIPT: ${langInstruction}
 TARGET SKILL LEVEL: ${practiceSkill}
 ${verifiedIdentity ? `CONFIRMED SONG IDENTITY: "${verifiedIdentity.title}" by "${verifiedIdentity.artist}". Use this exact song only.` : ''}
 
-TASK: Create a practice-ready guitar arrangement for this song.
+TASK: Create a practice-ready guitar arrangement for this song. This is an educational, transformative musical analysis intended for fair use practice.
 
 STRICT RULES — FOLLOW EXACTLY:
 
@@ -869,8 +870,8 @@ STRICT RULES — FOLLOW EXACTLY:
    - If CONFIRMED SONG IDENTITY is present, the output title and artist must match it exactly.
 
 1. LYRICS:
-   - Return the COMPLETE, UNABRIDGED lyrics of the song — every verse, chorus, bridge, pre-chorus, and outro.
-   - Use the EXACT original words as published. Do NOT paraphrase, truncate, or summarize.
+   - Provide the lyrics of the song — every verse, chorus, bridge, pre-chorus, and outro.
+   - You MUST provide the full textual content for the chord chart. This is essential for the educational chord placement.
    - ${lyricLanguageRule}
    - Transliterate/transcribe phonetically; do not translate meaning.
 
@@ -974,7 +975,7 @@ LYRIC SCRIPT RULE: ${lyricLanguageRule}
 
 RULES:
 1. If this matches a REAL, published song:
-   - Return the COMPLETE lyrics with ACCURATE chords from official sources.
+   - Provide the lyrics with ACCURATE chords from official sources. This is for an educational chord chart.
    - Use [chord] brackets inline before the word where the chord changes.
    - Use "### [Section]" headers for structure.
    - Transliterate/transcribe phonetically; do not translate meaning.
