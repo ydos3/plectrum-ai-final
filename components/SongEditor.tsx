@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Song, AppLanguage, SkillLevel } from '../types';
 import { saveSong, getSongs, findSongByTitle } from '../services/storageService';
 import { generateSongFromTitle, getSongRecommendations, getSearchSuggestions } from '../services/geminiService';
+import { getArrangementCacheKey, saveArrangementToCache } from '../services/songArrangementCache';
 import { startListening, stopListening } from '../services/speechService';
 import { extractYouTubeVideoId } from '../services/youtubeService';
 import { Save, ArrowLeft, Mic, Sparkles, Wand2, Loader2, Merge, Link as LinkIcon, Clock, ChevronDown, ChevronUp, Database, Search, Music, PlayCircle, X, Split, Zap, ExternalLink } from 'lucide-react';
@@ -379,6 +380,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             createdAt: songToEdit?.createdAt || Date.now(),
         };
         saveSong(newSong);
+        saveArrangementToCache(getArrangementCacheKey(`${title} ${artist}`, selectedLanguage, practiceSkillLevel, title, artist || 'Unknown'), newSong);
         onSave();
     };
 

@@ -1,6 +1,8 @@
 
 import { AppLanguage, SkillLevel } from "../types";
 import { searchLRCLIB, searchSongDatabase, normalizeSongSearchText } from "./songDatabaseService";
+import { transliterateLyricsForLanguage } from "./indicTransliterationService";
+import { getArrangementCacheKey, getCachedArrangement, saveArrangementToCache } from "./songArrangementCache";
 
 // ─── Model Configuration ──────────────────────────────────────────────
 // Pro handles high-value generation and vision. Flash handles lightweight UX paths.
@@ -14,8 +16,10 @@ const isMissingApiKeyError = (error: unknown) => (
 );
 
 const MODELS = {
-  PRO: "gemini-2.5-pro",         // Heavy: generation, analysis, chat (stable, paid-tier)
-  FLASH: "gemini-2.5-flash",     // Light: suggestions, search, recommendations (stable, fast)
+  PRO: "gemini-3-pro-preview",          // Best available quality. Falls back to 2.5 Pro if unavailable.
+  PRO_FALLBACK: "gemini-2.5-pro",
+  FLASH: "gemini-3-flash-preview",      // Fast identity/search work. Falls back to 2.5 Flash if unavailable.
+  FLASH_FALLBACK: "gemini-2.5-flash",
 } as const;
 
 const LANGUAGE_SCRIPT_HINTS: Record<AppLanguage, string> = {
@@ -117,6 +121,36 @@ const callGeminiApi = async (model: string, contents: any[], config: any = {}) =
   return part?.text || "";
 };
 
+const shouldFallbackModel = (error: unknown) => {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes('not found') ||
+    message.includes('unsupported') ||
+    message.includes('not supported') ||
+    message.includes('permission') ||
+    message.includes('model');
+};
+
+const callGeminiApiWithFallback = async (model: string, contents: any[], config: any = {}) => {
+  const modelChain = model === MODELS.PRO
+    ? [MODELS.PRO, MODELS.PRO_FALLBACK]
+    : model === MODELS.FLASH
+      ? [MODELS.FLASH, MODELS.FLASH_FALLBACK]
+      : [model];
+  let lastError: unknown;
+
+  for (const candidateModel of modelChain) {
+    try {
+      return await callGeminiApi(candidateModel, contents, config);
+    } catch (error) {
+      lastError = error;
+      if (!shouldFallbackModel(error)) throw error;
+      console.warn(`[Gemini] ${candidateModel} unavailable, trying fallback`, error);
+    }
+  }
+
+  throw lastError;
+};
+
 // ─── Chat (Gemini Flash) ───────────────────────────────────────────────
 
 export const sendChatMessage = async (
@@ -132,7 +166,7 @@ export const sendChatMessage = async (
     contents.push({ role: 'user', parts: [{ text: message.slice(0, 1200) }] });
 
     const responseText = await retryWithBackoff(async () => {
-      return await callGeminiApi(MODELS.FLASH, contents, {
+      return await callGeminiApiWithFallback(MODELS.FLASH, contents, {
         maxOutputTokens: 360,
         systemInstruction: {
           parts: [{ text: `You are Bes, an AI Luthier and wise Guitar Guide. You speak with a calm, knowledgeable tone. Help the user with guitar chords, scales, songwriting, practice tips, and music theory. Be concise but helpful.` }]
@@ -163,7 +197,7 @@ export const analyzeImage = async (base64Image: string, prompt: string): Promise
     }];
 
     const responseText = await retryWithBackoff(async () => {
-      return await callGeminiApi(MODELS.PRO, contents, { maxOutputTokens: 1800 });
+      return await callGeminiApiWithFallback(MODELS.PRO, contents, { maxOutputTokens: 1800 });
     });
     return responseText || "No analysis could be generated.";
   } catch (error) {
@@ -183,7 +217,7 @@ export const getSongRecommendations = async (historyTitles: string[], language: 
     const prompt = `${historyContext} Suggest 5 new song titles that fit their taste or are popular guitar songs, strictly in the ${language} language/region if the history suggests it, otherwise mix. Return ONLY a JSON array of strings.`;
 
     const responseText = await retryWithBackoff(async () => {
-      return await callGeminiApi(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
+      return await callGeminiApiWithFallback(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
         responseMimeType: "application/json",
         maxOutputTokens: 160
       });
@@ -221,7 +255,7 @@ export const getSearchSuggestions = async (query: string): Promise<string[]> => 
             Format: JSON Array of strings.`;
 
     const responseText = await retryWithBackoff(async () => {
-      return await callGeminiApi(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
+      return await callGeminiApiWithFallback(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
         responseMimeType: "application/json",
         temperature: 0.1,
         maxOutputTokens: 140
@@ -245,7 +279,7 @@ export const getYouTubeVideoId = async (query: string): Promise<string | null> =
     Return ONLY the 11-character ID string. Do not return a full URL. Do not return markdown. If you cannot find a reliable candidate, return exactly "NOT_FOUND".`;
 
     const responseText = await retryWithBackoff(async () => {
-      return await callGeminiApi(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
+      return await callGeminiApiWithFallback(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
         temperature: 0.1,
         maxOutputTokens: 16
       });
@@ -333,7 +367,8 @@ const buildPlayableSongDraft = (
       if (section) return section;
       const chord = progression[lyricLineIndex % progression.length];
       lyricLineIndex += 1;
-      return `[${chord}]${line.replace(/\[[^\]]*\]/g, '')}`;
+      const lyricText = transliterateLyricsForLanguage(line.replace(/\[[^\]]*\]/g, ''), language);
+      return `[${chord}]${lyricText}`;
     })
     .filter((line, index, lines) => line || lines[index - 1]);
 
@@ -435,7 +470,7 @@ Return strict JSON only:
 }`;
 
   const responseText = await retryWithBackoff(async () => {
-    return await callGeminiApi(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
+    return await callGeminiApiWithFallback(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
       responseMimeType: "application/json",
       temperature: 0,
       maxOutputTokens: 220
@@ -475,8 +510,46 @@ const findVerifiedLyrics = async (query: string, language: AppLanguage) => {
   return { dbResult: null, identity };
 };
 
+const isLikelyUserProvidedLyrics = (query: string) => {
+  const lines = query.split(/\r?\n/).filter(line => line.trim().length > 0);
+  const wordCount = query.trim().split(/\s+/).filter(Boolean).length;
+  return lines.length >= 3 || wordCount >= 28;
+};
+
+const buildUserProvidedLyricsArrangement = (
+  lyrics: string,
+  language: AppLanguage,
+  practiceSkill: SkillLevel
+) => {
+  const dbLikeResult = {
+    source: 'ai' as const,
+    title: 'Untitled Lyrics',
+    artist: 'User Provided',
+    plainLyrics: lyrics,
+    duration: Math.max(90, Math.min(420, lyrics.split(/\s+/).length * 2.1))
+  };
+
+  return buildPlayableSongDraft(
+    dbLikeResult,
+    language,
+    practiceSkill,
+    language === 'English'
+      ? 'Used user-provided lyrics directly, so Gemini did not need to reproduce copyrighted text.'
+      : `Used local ${language} phonetic transcription from user-provided lyrics, so Gemini did not need to reproduce copyrighted text.`
+  );
+};
+
 export const generateSongFromTitle = async (query: string, language: AppLanguage = 'English', skillLevel: SkillLevel = 'Intermediate'): Promise<any> => {
   const practiceSkill = normalizePracticeSkill(skillLevel);
+  const queryCacheKey = getArrangementCacheKey(query, language, practiceSkill);
+  const cached = await getCachedArrangement(queryCacheKey);
+  if (cached) return cached;
+
+  if (isLikelyUserProvidedLyrics(query)) {
+    const arrangement = buildUserProvidedLyricsArrangement(query, language, practiceSkill);
+    await saveArrangementToCache(queryCacheKey, arrangement);
+    return arrangement;
+  }
   // STEP 1: Try database first (LRCLIB) — instant, no AI cost
   const mashupMode = isMashupRequest(query);
   const verifiedLookup = mashupMode
@@ -487,6 +560,21 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
 
   if (dbResult && dbResult.plainLyrics) {
     console.log('[SongGen] Database hit! Using LRCLIB lyrics for:', dbResult.title);
+    const identityCacheKey = getArrangementCacheKey(query, language, practiceSkill, dbResult.title, dbResult.artist);
+    const identityCached = await getCachedArrangement(identityCacheKey);
+    if (identityCached) return identityCached;
+
+    const instantArrangement = buildPlayableSongDraft(
+      dbResult,
+      language,
+      practiceSkill,
+      language === 'English'
+        ? 'Loaded verified lyrics from the lyrics database and generated a playable local arrangement instantly.'
+        : `Loaded verified lyrics from the lyrics database and generated a local ${language} phonetic transcription instantly.`
+    );
+    await saveArrangementToCache(queryCacheKey, instantArrangement);
+    await saveArrangementToCache(identityCacheKey, instantArrangement);
+    return instantArrangement;
 
     // We have lyrics from DB. Now use Gemini Pro to add accurate chords.
     try {
@@ -544,7 +632,7 @@ LYRICS TO ANNOTATE:
 ${dbResult.plainLyrics}`;
 
       const chordResponse = await retryWithBackoff(async () => {
-        return await callGeminiApi(MODELS.PRO, [{ role: 'user', parts: [{ text: chordPrompt }] }], {
+        return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: chordPrompt }] }], {
           responseMimeType: "application/json",
           temperature: 0.1,
           maxOutputTokens: 8192
@@ -590,7 +678,7 @@ Lyrics:
 ${dbResult.plainLyrics}`;
 
         const fallbackResponse = await retryWithBackoff(async () => {
-          return await callGeminiApi(MODELS.FLASH, [{ role: 'user', parts: [{ text: compactPrompt }] }], {
+          return await callGeminiApiWithFallback(MODELS.FLASH, [{ role: 'user', parts: [{ text: compactPrompt }] }], {
             responseMimeType: "application/json",
             temperature: 0.2,
             maxOutputTokens: 8192
@@ -635,6 +723,34 @@ ${dbResult.plainLyrics}`;
   if (!mashupMode && !hasHighConfidenceIdentity(verifiedIdentity)) {
     const reason = verifiedIdentity?.reason ? ` ${verifiedIdentity.reason}` : '';
     throw new Error(`I could not confidently identify that exact song.${reason} Try "song title by artist", or paste a cleaner lyric line.`);
+  }
+
+  if (!mashupMode && verifiedIdentity?.title && verifiedIdentity.artist) {
+    const identityCacheKey = getArrangementCacheKey(query, language, practiceSkill, verifiedIdentity.title, verifiedIdentity.artist);
+    const arrangement = {
+      title: verifiedIdentity.title,
+      artist: verifiedIdentity.artist,
+      key: '',
+      recommendedKey: '',
+      capo: 0,
+      strummingPattern: practiceSkill === 'Beginner' ? 'D-DU-UDU' : 'D-D-U-U-D-U',
+      difficulty: practiceSkill,
+      skillLevel: practiceSkill,
+      practiceTips: [
+        'Plectrum verified the song identity, but could not find safe database lyrics.',
+        'Paste lyrics into the composer to generate a playable chorded version instantly.'
+      ],
+      chordSimplifications: [],
+      karaokeUrl: '',
+      language,
+      languageFallbackReason: 'Song identity was verified, but full lyrics were not reproduced by AI. Paste lyrics or import verified lyrics to avoid copyright/model restrictions.',
+      duration: 0,
+      source: 'identity-only',
+      content: `### [Lyrics Needed]\n[G]Verified: ${verifiedIdentity.title} by ${verifiedIdentity.artist}\n[C]Paste lyrics here, then generate again to add chords/transliteration without asking Gemini to reproduce the lyrics.`
+    };
+    await saveArrangementToCache(queryCacheKey, arrangement);
+    await saveArrangementToCache(identityCacheKey, arrangement);
+    return arrangement;
   }
 
   // STEP 2: Full AI generation with Gemini Pro, guarded by exact identity checks.
@@ -709,7 +825,7 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
 }`;
 
     const responseText = await retryWithBackoff(async () => {
-      return await callGeminiApi(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
+      return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
         responseMimeType: "application/json",
         temperature: 0.1,
         maxOutputTokens: 8192
@@ -743,6 +859,10 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
 // ─── Complete Song from Lyrics (Gemini Pro) ────────────────────────────
 
 export const completeSongFromLyrics = async (partialLyrics: string, language: AppLanguage = 'English'): Promise<any> => {
+  if (partialLyrics.trim()) {
+    return buildUserProvidedLyricsArrangement(partialLyrics, language, 'Intermediate');
+  }
+
   try {
     const lyricLanguageRule = getLyricLanguageInstruction(language);
     const prompt = `You are a professional musician and songwriter.
@@ -781,7 +901,7 @@ OUTPUT FORMAT (strict JSON):
 }`;
 
     const responseText = await retryWithBackoff(async () => {
-      return await callGeminiApi(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
+      return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
         responseMimeType: "application/json",
         maxOutputTokens: 8192
       });

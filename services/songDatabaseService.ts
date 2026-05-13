@@ -140,6 +140,25 @@ const scoreTrackForQuery = (query: string, track: LRCLibTrack) => {
   return Math.min(score, 1);
 };
 
+const hasArtistQualifier = (query: string, track: LRCLibTrack) => {
+  const queryTokens = significantTokens(query);
+  const titleTokens = new Set(significantTokens(track.trackName));
+  const artistTokens = new Set(significantTokens(track.artistName));
+  const extraTokens = queryTokens.filter(token => !titleTokens.has(token));
+  return extraTokens.length > 0 && extraTokens.every(token => artistTokens.has(token));
+};
+
+const hasUnmatchedQualifier = (query: string, track: LRCLibTrack) => {
+  const queryTokens = significantTokens(query);
+  const titleTokens = new Set(significantTokens(track.trackName));
+  const artistTokens = new Set(significantTokens(track.artistName));
+  const lyricScore = lyricMatchScore(query, track.plainLyrics);
+  const extraTokens = queryTokens.filter(token => !titleTokens.has(token));
+  return extraTokens.length > 0 &&
+    !extraTokens.every(token => artistTokens.has(token)) &&
+    lyricScore < 0.5;
+};
+
 const LRCLIB_BASE = 'https://lrclib.net/api';
 
 export const searchLRCLIB = async (query: string): Promise<LRCLibTrack[]> => {
@@ -256,6 +275,21 @@ export const searchSongDatabase = async (query: string): Promise<DatabaseSongRes
   }
 
   const best = bestScored.track;
+  const normalizedQuery = normalizeSongSearchText(query);
+  const normalizedBestTitle = normalizeSongSearchText(best.trackName);
+  const exactTitleMatches = scored.filter(({ track }) => normalizeSongSearchText(track.trackName) === normalizedBestTitle).length;
+  const hasOnlyTitleInQuery = normalizedQuery === normalizedBestTitle || includesAllTokens(normalizedQuery, significantTokens(best.trackName));
+  const secondScore = scored[1]?.score || 0;
+
+  if (hasUnmatchedQualifier(query, best)) {
+    console.log('[SongDB] Best LRCLIB result did not match the requested artist/qualifier, falling back to identity resolution');
+    return null;
+  }
+
+  if (!hasArtistQualifier(query, best) && hasOnlyTitleInQuery && exactTitleMatches > 1 && bestScored.score - secondScore < 0.2) {
+    console.log('[SongDB] Exact title is ambiguous in LRCLIB, falling back to AI identity resolution');
+    return null;
+  }
 
   console.log('[SongDB] LRCLIB hit:', best.trackName, '-', best.artistName, `(score ${bestScored.score.toFixed(2)})`);
 
