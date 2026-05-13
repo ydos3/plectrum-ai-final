@@ -39,6 +39,8 @@ const clampNumber = (value: unknown, fallback: number, min: number, max: number)
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
 };
 
+const formatSpeed = (speed: number) => speed.toFixed(2).replace(/0$/, '').replace(/\.0$/, '');
+
 const resolveInitialSong = (initialSong?: Song) => {
   if (initialSong) return initialSong;
   const persisted = readPracticeRoomState();
@@ -572,8 +574,8 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
                          </button>
                      </div>
                      <div className="flex items-center gap-3">
-                        <input type="range" min="0.5" max="3" step="0.5" value={scrollSpeed} onChange={e => setScrollSpeed(parseFloat(e.target.value))} className="w-full h-1 bg-slate-800 rounded-lg accent-amber-500 cursor-pointer" />
-                        <span className="w-10 text-right text-[10px] font-black text-amber-400 tabular-nums">{scrollSpeed.toFixed(1)}x</span>
+                        <input type="range" min="0.5" max="3" step="0.01" value={scrollSpeed} onChange={e => setScrollSpeed(clampNumber(e.target.value, 1, 0.5, 3))} aria-label="Scroll speed" className="w-full h-1 bg-slate-800 rounded-lg accent-amber-500 cursor-pointer" />
+                        <span className="w-12 text-right text-[10px] font-black text-amber-400 tabular-nums">{formatSpeed(scrollSpeed)}x</span>
                      </div>
                 </div>
               )}
