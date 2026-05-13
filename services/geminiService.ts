@@ -627,9 +627,9 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
   const practiceSkill = normalizePracticeSkill(skillLevel);
   const queryCacheKey = getArrangementCacheKey(query, language, practiceSkill);
   const cached = await getCachedArrangement(queryCacheKey);
-  if (cached) return cached;
+  if (cached && cached.source !== 'recoverable-search' && cached.source !== 'identity-only' && !cached.content?.includes('[Lyrics Needed]')) return cached;
   const sharedLibraryHit = await searchCachedArrangement(query, language, practiceSkill);
-  if (sharedLibraryHit) return sharedLibraryHit;
+  if (sharedLibraryHit && sharedLibraryHit.source !== 'recoverable-search' && sharedLibraryHit.source !== 'identity-only' && !sharedLibraryHit.content?.includes('[Lyrics Needed]')) return sharedLibraryHit;
 
   if (isLikelyUserProvidedLyrics(query)) {
     const arrangement = buildUserProvidedLyricsArrangement(query, language, practiceSkill);
