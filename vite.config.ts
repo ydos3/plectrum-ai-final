@@ -2,6 +2,7 @@ import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { handleGeminiProxyRequest } from './server/geminiProxy';
+import { handleYouTubeSearchRequest } from './server/youtubeSearch';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
@@ -38,6 +39,28 @@ export default defineConfig(({ mode }) => {
                 res.statusCode = 400;
                 res.setHeader('Content-Type', 'application/json');
                 res.end(JSON.stringify({ error: 'Invalid Gemini request.' }));
+              }
+            });
+            server.middlewares.use('/api/youtube-search', async (req, res) => {
+              if (req.method !== 'GET') {
+                res.statusCode = 405;
+                res.setHeader('Allow', 'GET');
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: 'Method not allowed.' }));
+                return;
+              }
+
+              try {
+                const url = new URL(req.url || '', 'http://localhost');
+                const payload = Object.fromEntries(url.searchParams.entries());
+                const result = await handleYouTubeSearchRequest(payload, req.method || 'GET');
+                res.statusCode = result.status;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify(result.body));
+              } catch (error: any) {
+                res.statusCode = 500;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: error.message || 'YouTube search failed.' }));
               }
             });
           }

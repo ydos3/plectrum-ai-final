@@ -4,7 +4,7 @@ import { Song, Handedness } from '../types';
 import { Play, Pause, X, Layout, Search, ExternalLink, ArrowRight, AlertCircle, Youtube, Minus, Plus, Loader2, Music, RefreshCw, Mic2, Merge, ArrowLeft, Activity, Timer } from 'lucide-react';
 import { getChordFingering } from '../services/chordService';
 import { getYouTubeVideoId } from '../services/geminiService';
-import { extractYouTubeVideoId, getYouTubeSearchUrl, toYouTubeWatchUrl } from '../services/youtubeService';
+import { extractYouTubeVideoId, getYouTubeSearchUrl, searchYouTubeVideoId, toYouTubeWatchUrl } from '../services/youtubeService';
 import GuitarFretboard from './GuitarFretboard';
 
 interface TeleprompterProps {
@@ -74,6 +74,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const activeVideoId = (fallbackLevel === 2 && !isMashupMode)
     ? extractYouTubeVideoId(videoUrl)
     : dynamicVideoId;
+  const videoMountKey = `${iframeKey}-${activeVideoId || 'empty'}`;
 
   useEffect(() => {
     localStorage.setItem(TELEPROMPTER_STATE_KEY, JSON.stringify({
@@ -370,6 +371,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         
     setSearchQuery(initialQuery);
     setVideoError(false);
+    setVideoErrorMessage('');
+    setPlayerReady(false);
+    setIsFetchingId(false);
+    setDynamicVideoId(null);
     
     if (song.karaokeUrl && extractYouTubeVideoId(song.karaokeUrl)) {
         setFallbackLevel(2);
@@ -387,6 +392,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     if (fallbackLevel === 2 && metadataId && !isMashupMode) {
        // We have a direct URL, no need to ask Gemini
        setDynamicVideoId(null);
+       setIsFetchingId(false);
+       setVideoError(false);
+       setVideoErrorMessage('');
        return; 
     }
 
@@ -400,7 +408,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     else if (fallbackLevel === 4) term = `${song.title} instrumental backing track`;
     else term = `${song.title} ${song.artist}`;
 
-    getYouTubeVideoId(term).then(id => {
+    const findVideo = async () => (
+      await searchYouTubeVideoId(term) || await getYouTubeVideoId(term)
+    );
+
+    findVideo().then(id => {
        if (!isMounted) return;
        if (id) {
           setDynamicVideoId(id);
@@ -408,13 +420,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
           setVideoErrorMessage('');
        } else {
           setVideoError(true);
-          setVideoErrorMessage('Could not find an embeddable YouTube match.');
+          setVideoErrorMessage('Could not find a playable YouTube match.');
        }
        setIsFetchingId(false);
     });
 
     return () => { isMounted = false; };
-  }, [karaokeEnabled, fallbackLevel, videoUrl, isMashupMode, song, iframeKey, searchQuery]);
+  }, [karaokeEnabled, fallbackLevel, videoUrl, isMashupMode, song.title, song.artist, iframeKey]);
 
   useEffect(() => {
     if (!karaokeEnabled) {
@@ -422,12 +434,14 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
        return;
     }
     setVideoError(false);
+    setVideoErrorMessage('');
     
     const metadataId = extractYouTubeVideoId(videoUrl);
     const hasTarget = (fallbackLevel === 2 && metadataId && !isMashupMode) || dynamicVideoId;
     
-    if (!hasTarget) return; // Wait for Gemini to find the ID
+    if (!hasTarget) return; // Wait for a video ID
 
+    setPlayerReady(false);
     if (!(window as any).YT) {
         const tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
@@ -442,7 +456,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
             try { playerRef.current.destroy(); } catch(e) {}
         }
     };
-  }, [karaokeEnabled, iframeKey, dynamicVideoId, fallbackLevel]);
+  }, [karaokeEnabled, iframeKey, dynamicVideoId, fallbackLevel, videoUrl, isMashupMode]);
 
   const loadPlayer = () => {
       if (!document.getElementById('youtube-target')) return;
@@ -506,6 +520,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   };
 
   const handleVideoError = (code?: number) => {
+      setPlayerReady(false);
+      setIsFetchingId(false);
       if (code) {
           setVideoErrorMessage(`Could not embed this video. YouTube returned error ${code}.`);
       }
@@ -526,12 +542,17 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     }
     setVideoError(false);
     setVideoErrorMessage('');
+    setPlayerReady(false);
+    setIsFetchingId(false);
+    setDynamicVideoId(null);
     setIframeKey(k => k + 1);
     setFallbackLevel(2);
   };
   const handleInternalSearch = () => {
     setVideoError(false);
     setVideoErrorMessage('');
+    setPlayerReady(false);
+    setIsFetchingId(false);
     setDynamicVideoId(null);
     setFallbackLevel(1);
     setIframeKey(k => k + 1);
@@ -788,7 +809,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                  <div className="p-3 md:p-4 bg-white/[0.03] border-b border-white/[0.05] flex items-center justify-between backdrop-blur-lg">
                      <div className="flex items-center gap-2 text-indigo-400 font-bold uppercase tracking-widest text-xs">
                          <Youtube className="w-4 h-4" /> 
-                         {fallbackLevel === 2 ? 'Direct Source' : (fallbackLevel === 3 ? 'Official Video' : 'Karaoke Search')}
+                         {fallbackLevel === 2 ? 'Direct Source' : (fallbackLevel === 3 ? 'Official Video' : (fallbackLevel === 4 ? 'Backing Track' : 'Karaoke Search'))}
                      </div>
                      <div className="flex gap-1.5">
                          <button onClick={() => { setFallbackLevel(1); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel === 1 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Karaoke Mode"><Mic2 className="w-3 h-3"/></button>
@@ -798,13 +819,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
                  <div className="aspect-video bg-black w-full border-b border-white/[0.05] relative group shrink-0">
                      <div id="player-wrapper" className={`w-full h-full absolute inset-0 ${videoError ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-                        <div id="youtube-target" className="w-full h-full"></div>
+                        <div key={videoMountKey} id="youtube-target" className="w-full h-full"></div>
                      </div>
                      {(!playerReady && !videoError) || isFetchingId ? (
                          <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-10 flex-col pointer-events-none">
                             <Loader2 className="w-8 h-8 text-indigo-400 animate-spin mb-4" />
                             <p className="text-xs text-indigo-400/60 font-bold uppercase tracking-widest animate-pulse">
-                               {isFetchingId ? "Gemini Searching..." : "Loading Player..."}
+                               {isFetchingId ? "Searching YouTube..." : "Loading Player..."}
                             </p>
                          </div>
                      ) : null}

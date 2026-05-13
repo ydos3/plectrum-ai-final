@@ -41,3 +41,30 @@ export const toYouTubeWatchUrl = (id: string) => `https://www.youtube.com/watch?
 export const getYouTubeSearchUrl = (query: string) => (
   `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
 );
+
+export const validateYouTubeVideoId = async (id: string) => {
+  if (!isValidYouTubeVideoId(id)) return false;
+
+  try {
+    const response = await fetch(`/api/youtube-search?videoId=${encodeURIComponent(id)}`);
+    if (!response.ok) return false;
+    const data = await response.json();
+    return data?.ok === true;
+  } catch {
+    return false;
+  }
+};
+
+export const searchYouTubeVideoId = async (query: string) => {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) return null;
+
+  try {
+    const response = await fetch(`/api/youtube-search?q=${encodeURIComponent(cleanQuery)}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return isValidYouTubeVideoId(data?.id) ? data.id : null;
+  } catch {
+    return null;
+  }
+};
