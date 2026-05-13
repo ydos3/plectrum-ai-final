@@ -17,8 +17,9 @@ const STRING_MAP: Record<string, number> = {
  * Parses input like "B7-G2-G0-G0-B1/A0"
  * - Hyphen (-): Sequential play
  * - Slash (/): Simultaneous play (Chord)
- * - h: Hammer-on (affects next note)
- * - p: Pull-off (affects next note)
+ * - h / hammer / hammeron: Hammer-on (affects next note)
+ * - p / pull / pulloff / pull-off: Pull-off (affects next note)
+ * - s / slide: accepted as a timing modifier and played as the next normal note
  */
 export const parseFingerstyleTab = (input: string): TabFrame[] => {
   // Remove whitespace, keep delimiters
@@ -35,12 +36,17 @@ export const parseFingerstyleTab = (input: string): TabFrame[] => {
     if (!token) return;
 
     // Check for technique tokens
-    if (token.toLowerCase() === 'h') {
+    const normalizedToken = token.toLowerCase();
+    if (normalizedToken === 'h' || normalizedToken === 'hammer' || normalizedToken === 'hammeron' || normalizedToken === 'hammer-on') {
       nextTechnique = 'hammer-on';
       return; // Don't create a frame for the modifier itself
     }
-    if (token.toLowerCase() === 'p') {
+    if (normalizedToken === 'p' || normalizedToken === 'pull' || normalizedToken === 'pulloff' || normalizedToken === 'pull-off') {
       nextTechnique = 'pull-off';
+      return;
+    }
+    if (normalizedToken === 's' || normalizedToken === 'slide') {
+      nextTechnique = 'normal';
       return;
     }
 

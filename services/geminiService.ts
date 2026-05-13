@@ -1,6 +1,6 @@
 
 import { AppLanguage, SkillLevel } from "../types";
-import { searchSongDatabase, parseSyncedLyrics } from "./songDatabaseService";
+import { searchLRCLIB, searchSongDatabase, normalizeSongSearchText } from "./songDatabaseService";
 
 // ─── Model Configuration ──────────────────────────────────────────────
 // Pro handles high-value generation and vision. Flash handles lightweight UX paths.
@@ -105,13 +105,19 @@ const callGeminiApi = async (model: string, contents: any[], config: any = {}) =
   }
 
   const data = await response.json();
+  if (data.promptFeedback?.blockReason) {
+    throw new Error(`Gemini blocked the request: ${data.promptFeedback.blockReason}`);
+  }
   const candidate = data.candidates?.[0];
   if (!candidate) return "";
+  if (candidate.finishReason && candidate.finishReason !== 'STOP' && !candidate.content?.parts?.length) {
+    throw new Error(`Gemini stopped before returning content: ${candidate.finishReason}`);
+  }
   const part = candidate.content?.parts?.[0];
   return part?.text || "";
 };
 
-// ─── Chat (Gemini 3.1 Pro) ─────────────────────────────────────────────
+// ─── Chat (Gemini Flash) ───────────────────────────────────────────────
 
 export const sendChatMessage = async (
   message: string,
@@ -144,7 +150,7 @@ export const sendChatMessage = async (
   }
 };
 
-// ─── Image Analysis (Gemini 3.1 Pro) ───────────────────────────────────
+// ─── Image Analysis (Gemini Pro) ───────────────────────────────────────
 
 export const analyzeImage = async (base64Image: string, prompt: string): Promise<string> => {
   try {
@@ -166,7 +172,7 @@ export const analyzeImage = async (base64Image: string, prompt: string): Promise
   }
 };
 
-// ─── Song Recommendations (Gemini 3 Flash - fast) ──────────────────────
+// ─── Song Recommendations (Gemini Flash - fast) ────────────────────────
 
 export const getSongRecommendations = async (historyTitles: string[], language: string): Promise<string[]> => {
   try {
@@ -190,19 +196,29 @@ export const getSongRecommendations = async (historyTitles: string[], language: 
   }
 };
 
-// ─── Search Suggestions (Gemini 3 Flash - fast) ───────────────────────
+// ─── Search Suggestions (DB-first, Gemini Flash fallback) ──────────────
 
 export const getSearchSuggestions = async (query: string): Promise<string[]> => {
   if (!query || query.length < 2) return [];
   try {
+    const dbMatches = await searchLRCLIB(query);
+    const verifiedDbSuggestions = Array.from(new Set(
+      dbMatches
+        .filter(track => !track.instrumental && (track.plainLyrics || track.syncedLyrics))
+        .slice(0, 5)
+        .map(track => `${track.trackName} by ${track.artistName}`)
+    ));
+    if (verifiedDbSuggestions.length > 0) return verifiedDbSuggestions;
+
     const prompt = `User Input: "${query}".
-            Task: Identify the song based on the Title OR the Lyrics provided in the input.
+            Task: Identify exact real songs based on the title OR lyric fragment in the input.
             Rules:
-            1. If the input matches a song title (e.g., "Tum"), return songs starting with "Tum".
-            2. If the input matches a famous lyric (e.g., "palm of my hand"), return the song containing that lyric (e.g., "A Thousand Years").
-            3. Return only REAL, commercially available songs.
-            4. Be consistent. Do not change answers randomly.
-            Format: JSON Array of strings (Song Titles only).`;
+            1. Return only songs that are strong matches for the exact text the user typed.
+            2. If the input is a noisy lyric fragment, return the song only if you are confident the lyric belongs to it.
+            3. Return only REAL, commercially available songs, formatted as "Song Title by Artist".
+            4. If confidence is low, return [].
+            5. Be consistent. Do not change answers randomly.
+            Format: JSON Array of strings.`;
 
     const responseText = await retryWithBackoff(async () => {
       return await callGeminiApi(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
@@ -244,21 +260,235 @@ export const getYouTubeVideoId = async (query: string): Promise<string | null> =
   }
 };
 
-// ─── Song Generation (DB-First → Gemini 3.1 Pro fallback) ──────────────
+// ─── Song Generation (Verified DB-first, Gemini Pro fallback) ──────────
 
 const normalizePracticeSkill = (skillLevel?: SkillLevel) => (
   skillLevel === 'Beginner' || skillLevel === 'Intermediate' ? skillLevel : 'Advanced'
 );
 
+type SongIdentityResolution = {
+  status?: 'FOUND' | 'AMBIGUOUS' | 'NOT_FOUND';
+  found?: boolean;
+  title?: string;
+  artist?: string;
+  confidence?: number;
+  searchQuery?: string;
+  reason?: string;
+};
+
+const cleanJsonText = (value: string) => value.replace(/```json/g, '').replace(/```/g, '').trim();
+
+const parseGeminiJson = (value: string) => {
+  const cleanText = cleanJsonText(value);
+  try {
+    return JSON.parse(cleanText);
+  } catch {
+    const start = cleanText.indexOf('{');
+    const end = cleanText.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      return JSON.parse(cleanText.slice(start, end + 1));
+    }
+    throw new Error('Gemini returned text that was not valid JSON.');
+  }
+};
+
+const normalizeContentField = (data: any) => {
+  if (!data?.content && data?.lyrics) data.content = data.lyrics;
+  if (!data?.content && data?.body) data.content = data.body;
+  if (!data?.content && data?.text) data.content = data.text;
+  if (Array.isArray(data?.content)) data.content = data.content.join('\n');
+  return data;
+};
+
+const hasChordedContent = (value: unknown) => (
+  typeof value === 'string' &&
+  value.trim().length > 0 &&
+  /\[[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?\d*(?:\/[A-G](?:#|b)?)?\]/.test(value)
+);
+
+const sectionTitleForLine = (line: string) => {
+  const normalized = line.toLowerCase();
+  if (/\bchorus\b/.test(normalized)) return '### [Chorus]';
+  if (/\bbridge\b/.test(normalized)) return '### [Bridge]';
+  return '';
+};
+
+const buildPlayableSongDraft = (
+  dbResult: NonNullable<Awaited<ReturnType<typeof searchSongDatabase>>>,
+  language: AppLanguage,
+  practiceSkill: SkillLevel,
+  reason: string
+) => {
+  const progression = practiceSkill === 'Beginner'
+    ? ['G', 'D', 'Em', 'C']
+    : ['G', 'D', 'Em7', 'Cadd9', 'Am', 'D'];
+  let lyricLineIndex = 0;
+
+  const contentLines = (dbResult.plainLyrics || '')
+    .split(/\r?\n/)
+    .map((rawLine) => {
+      const line = rawLine.trim();
+      if (!line) return '';
+      const section = sectionTitleForLine(line);
+      if (section) return section;
+      const chord = progression[lyricLineIndex % progression.length];
+      lyricLineIndex += 1;
+      return `[${chord}]${line.replace(/\[[^\]]*\]/g, '')}`;
+    })
+    .filter((line, index, lines) => line || lines[index - 1]);
+
+  if (!contentLines.some(line => line.startsWith('###'))) {
+    contentLines.unshift('### [Verse 1]');
+  }
+
+  return {
+    title: dbResult.title,
+    artist: dbResult.artist,
+    key: 'G Major',
+    recommendedKey: 'G Major',
+    capo: 0,
+    strummingPattern: practiceSkill === 'Beginner' ? 'D-DU-UDU' : 'D-D-U-U-D-U',
+    difficulty: practiceSkill,
+    skillLevel: practiceSkill,
+    practiceTips: [
+      'Use the generated progression as a playable draft, then adjust chord changes by ear.',
+      'Loop one section at a time before increasing tempo.'
+    ],
+    chordSimplifications: practiceSkill === 'Beginner'
+      ? [{ from: 'F', to: 'Fmaj7', reason: 'avoids a full barre shape when adapting the draft' }]
+      : [],
+    karaokeUrl: '',
+    language,
+    languageFallbackReason: reason,
+    content: contentLines.join('\n'),
+    duration: dbResult.duration,
+    timedLyrics: dbResult.syncedLyrics,
+    source: 'database-fallback',
+  };
+};
+
+const isMashupRequest = (query: string) => {
+  const normalized = normalizeSongSearchText(query);
+  return normalized.includes('mashup') || /\bvs\b/.test(normalized) || query.includes(',');
+};
+
+const stripGenerationDirectives = (query: string) => (
+  query
+    .replace(/\([^)]*(?:open chords?|barre chords?|capo|beginner|easy|easier)[^)]*\)/gi, ' ')
+    .replace(/\s+-\s+make\s+this\s+song.*$/i, ' ')
+    .replace(/\b(?:use|with)\s+(?:open|barre)\s+chords?\b/gi, ' ')
+    .replace(/\b(?:beginner|easy|easier|capo suggestions?)\b/gi, ' ')
+    .trim()
+);
+
+const hasHighConfidenceIdentity = (identity?: SongIdentityResolution | null) => (
+  !!identity &&
+  (identity.status === 'FOUND' || identity.found === true) &&
+  !!identity.title &&
+  !!identity.artist &&
+  typeof identity.confidence === 'number' &&
+  identity.confidence >= 0.72
+);
+
+const identityLabel = (identity: SongIdentityResolution) => (
+  `${identity.title || ''} ${identity.artist || ''}`.trim()
+);
+
+const sameIdentity = (actual: any, expected?: SongIdentityResolution | null) => {
+  if (!expected?.title || !expected.artist) return true;
+  const actualTitle = normalizeSongSearchText(actual?.title || '');
+  const actualArtist = normalizeSongSearchText(actual?.artist || '');
+  const expectedTitle = normalizeSongSearchText(expected.title);
+  const expectedArtist = normalizeSongSearchText(expected.artist);
+
+  const titleMatches = actualTitle === expectedTitle ||
+    (actualTitle.includes(expectedTitle) && expectedTitle.length > 2) ||
+    (expectedTitle.includes(actualTitle) && actualTitle.length > 2);
+  const artistMatches = actualArtist === expectedArtist ||
+    actualArtist.includes(expectedArtist) ||
+    expectedArtist.includes(actualArtist);
+
+  return titleMatches && artistMatches;
+};
+
+const identifySongFromQuery = async (query: string, language: AppLanguage): Promise<SongIdentityResolution | null> => {
+  const prompt = `Identify the exact real song requested by this user input.
+
+USER INPUT: "${query}"
+LANGUAGE/REGION HINT: ${language}
+
+Rules:
+- The input may be a title, "title by artist", or a noisy lyric fragment with spelling mistakes.
+- For Hindi/Urdu/Punjabi/Indian indie songs, handle Romanized phonetics and common misspellings.
+- Return FOUND only when you can identify one specific released song. Do not choose a similar song.
+- If there are multiple plausible songs or confidence is below 0.72, return AMBIGUOUS or NOT_FOUND.
+- Do not invent artists, alternate titles, lyrics, URLs, or metadata.
+
+Return strict JSON only:
+{
+  "status": "FOUND | AMBIGUOUS | NOT_FOUND",
+  "title": "Exact song title or empty",
+  "artist": "Primary artist or empty",
+  "confidence": 0.0,
+  "searchQuery": "best title artist search query or empty",
+  "reason": "short reason"
+}`;
+
+  const responseText = await retryWithBackoff(async () => {
+    return await callGeminiApi(MODELS.FLASH, [{ role: 'user', parts: [{ text: prompt }] }], {
+      responseMimeType: "application/json",
+      temperature: 0,
+      maxOutputTokens: 220
+    });
+  }, 2, 800);
+
+  if (!responseText) return null;
+  const parsed = parseGeminiJson(responseText);
+  return Array.isArray(parsed) ? parsed[0] : parsed;
+};
+
+const findVerifiedLyrics = async (query: string, language: AppLanguage) => {
+  const lookupQuery = stripGenerationDirectives(query);
+  const directDbResult = await searchSongDatabase(lookupQuery);
+  if (directDbResult?.plainLyrics) {
+    return { dbResult: directDbResult, identity: null as SongIdentityResolution | null };
+  }
+
+  const identity = await identifySongFromQuery(lookupQuery, language);
+  if (!hasHighConfidenceIdentity(identity)) {
+    return { dbResult: null, identity };
+  }
+
+  const identitySearches = [
+    identity!.searchQuery,
+    identityLabel(identity!),
+    `${identity!.title} ${identity!.artist}`
+  ].filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index);
+
+  for (const searchQuery of identitySearches) {
+    const resolvedDbResult = await searchSongDatabase(searchQuery);
+    if (resolvedDbResult?.plainLyrics) {
+      return { dbResult: resolvedDbResult, identity };
+    }
+  }
+
+  return { dbResult: null, identity };
+};
+
 export const generateSongFromTitle = async (query: string, language: AppLanguage = 'English', skillLevel: SkillLevel = 'Intermediate'): Promise<any> => {
   const practiceSkill = normalizePracticeSkill(skillLevel);
   // STEP 1: Try database first (LRCLIB) — instant, no AI cost
-  const dbResult = await searchSongDatabase(query);
+  const mashupMode = isMashupRequest(query);
+  const verifiedLookup = mashupMode
+    ? { dbResult: null, identity: null as SongIdentityResolution | null }
+    : await findVerifiedLyrics(query, language);
+  const dbResult = verifiedLookup.dbResult;
+  const verifiedIdentity = verifiedLookup.identity;
 
   if (dbResult && dbResult.plainLyrics) {
     console.log('[SongGen] Database hit! Using LRCLIB lyrics for:', dbResult.title);
 
-    // We have lyrics from DB. Now use Gemini 3.1 Pro to add accurate chords
+    // We have lyrics from DB. Now use Gemini Pro to add accurate chords.
     try {
       const lyricLanguageRule = getLyricLanguageInstruction(language);
 
@@ -267,6 +497,7 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
 TASK: Add accurate guitar chords and a practice-ready arrangement to the following lyrics for "${dbResult.title}" by "${dbResult.artist}".
 OUTPUT LANGUAGE/SCRIPT: ${language}
 TARGET SKILL LEVEL: ${practiceSkill}
+${verifiedIdentity ? `CONFIRMED SONG IDENTITY: "${verifiedIdentity.title}" by "${verifiedIdentity.artist}". Use this exact song only.` : ''}
 
 STRICT RULES — FOLLOW EXACTLY:
 1. CHORD ACCURACY:
@@ -320,8 +551,10 @@ ${dbResult.plainLyrics}`;
         });
       });
 
-      const cleanText = chordResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-      const chordData = JSON.parse(cleanText);
+      const chordData = normalizeContentField(parseGeminiJson(chordResponse));
+      if (!hasChordedContent(chordData.content)) {
+        throw new Error('Gemini response did not include playable chorded content.');
+      }
 
       return {
         title: dbResult.title,
@@ -336,22 +569,76 @@ ${dbResult.plainLyrics}`;
         karaokeUrl: chordData.karaokeUrl || '',
         language: language,
         languageFallbackReason: chordData.languageFallbackReason || '',
-        content: chordData.content || dbResult.plainLyrics,
+        content: chordData.content,
         duration: dbResult.duration,
         timedLyrics: dbResult.syncedLyrics,
         source: 'database', // Flag for UI
       };
     } catch (e) {
-      console.warn('[SongGen] Chord addition failed', e);
       if (isMissingApiKeyError(e)) {
         throw e;
       }
-      throw new Error(`I found lyrics for "${dbResult.title}", but Gemini could not add chords/transliteration. Please retry, or paste your lyrics manually and generate again.`);
+      console.warn('[SongGen] Primary chord addition failed, trying compact fallback', e);
+
+      try {
+        const compactPrompt = `Return strict JSON only. Add simple playable guitar chords to these verified lyrics for "${dbResult.title}" by "${dbResult.artist}".
+Use ${practiceSkill} friendly chords, preserve line breaks, and put chords inline in [G] format.
+Return:
+{"key":"G Major","recommendedKey":"G Major","capo":0,"strummingPattern":"D-DU-UDU","difficulty":"${practiceSkill}","practiceTips":["short tip"],"chordSimplifications":[],"karaokeUrl":"","language":"${language}","languageFallbackReason":"","content":"### [Verse 1]\\n[G]line..."}
+
+Lyrics:
+${dbResult.plainLyrics}`;
+
+        const fallbackResponse = await retryWithBackoff(async () => {
+          return await callGeminiApi(MODELS.FLASH, [{ role: 'user', parts: [{ text: compactPrompt }] }], {
+            responseMimeType: "application/json",
+            temperature: 0.2,
+            maxOutputTokens: 8192
+          });
+        }, 2, 800);
+
+        const fallbackData = normalizeContentField(parseGeminiJson(fallbackResponse));
+        if (!hasChordedContent(fallbackData.content)) {
+          throw new Error('Gemini fallback response did not include playable chorded content.');
+        }
+
+        return {
+          title: dbResult.title,
+          artist: dbResult.artist,
+          key: fallbackData.key || 'G Major',
+          recommendedKey: fallbackData.recommendedKey || fallbackData.key || 'G Major',
+          capo: typeof fallbackData.capo === 'number' ? fallbackData.capo : 0,
+          strummingPattern: fallbackData.strummingPattern || 'D-DU-UDU',
+          difficulty: fallbackData.difficulty || practiceSkill,
+          practiceTips: Array.isArray(fallbackData.practiceTips) ? fallbackData.practiceTips : [],
+          chordSimplifications: Array.isArray(fallbackData.chordSimplifications) ? fallbackData.chordSimplifications : [],
+          karaokeUrl: fallbackData.karaokeUrl || '',
+          language,
+          languageFallbackReason: fallbackData.languageFallbackReason || 'Used a compact AI fallback after the full chord/transliteration pass failed.',
+          content: fallbackData.content,
+          duration: dbResult.duration,
+          timedLyrics: dbResult.syncedLyrics,
+          source: 'database-fallback',
+        };
+      } catch (fallbackError) {
+        console.warn('[SongGen] Compact Gemini fallback failed, using deterministic playable draft', fallbackError);
+        return buildPlayableSongDraft(
+          dbResult,
+          language,
+          practiceSkill,
+          'Gemini chord/transliteration was temporarily unavailable, so Plectrum generated a playable draft from verified lyrics instead of failing.'
+        );
+      }
     }
   }
 
-  // STEP 2: Full AI generation with Gemini 3.1 Pro
-  console.log('[SongGen] No DB hit, using Gemini 3.1 Pro for:', query);
+  if (!mashupMode && !hasHighConfidenceIdentity(verifiedIdentity)) {
+    const reason = verifiedIdentity?.reason ? ` ${verifiedIdentity.reason}` : '';
+    throw new Error(`I could not confidently identify that exact song.${reason} Try "song title by artist", or paste a cleaner lyric line.`);
+  }
+
+  // STEP 2: Full AI generation with Gemini Pro, guarded by exact identity checks.
+  console.log('[SongGen] No DB hit, using Gemini Pro for:', query);
 
   try {
     const langInstruction = language === 'English' ? "English/Roman" : `${language} (${LANGUAGE_SCRIPT_HINTS[language] || 'selected script'})`;
@@ -361,10 +648,16 @@ ${dbResult.plainLyrics}`;
 USER REQUEST: "${query}"
 TARGET LANGUAGE/SCRIPT: ${langInstruction}
 TARGET SKILL LEVEL: ${practiceSkill}
+${verifiedIdentity ? `CONFIRMED SONG IDENTITY: "${verifiedIdentity.title}" by "${verifiedIdentity.artist}". Use this exact song only.` : ''}
 
 TASK: Create a practice-ready guitar arrangement for this song.
 
 STRICT RULES — FOLLOW EXACTLY:
+
+0. SONG IDENTITY:
+   - First verify the exact requested song. If you are not certain, return {"found": false, "reason": "short reason"} and no arrangement.
+   - Do NOT substitute a different song with a similar title, lyric, artist, language, or mood.
+   - If CONFIRMED SONG IDENTITY is present, the output title and artist must match it exactly.
 
 1. LYRICS:
    - Return the COMPLETE, UNABRIDGED lyrics of the song — every verse, chorus, bridge, pre-chorus, and outro.
@@ -397,6 +690,7 @@ STRICT RULES — FOLLOW EXACTLY:
 
 OUTPUT FORMAT (strict JSON, no markdown fences):
 {
+  "found": true,
   "title": "Exact Song Title",
   "artist": "Exact Artist Name",
   "key": "e.g. C Major",
@@ -422,13 +716,15 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
       });
     }, 4, 2000);
 
-    const cleanText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    let parsed = JSON.parse(cleanText);
+    let parsed = parseGeminiJson(responseText);
     if (Array.isArray(parsed)) parsed = parsed[0];
-    if (!parsed.content && parsed.lyrics) parsed.content = parsed.lyrics;
-    if (!parsed.content && parsed.body) parsed.content = parsed.body;
-    if (!parsed.content && parsed.text) parsed.content = parsed.text;
-    if (Array.isArray(parsed.content)) parsed.content = parsed.content.join('\n');
+    if (parsed?.found === false) {
+      throw new Error(parsed.reason || 'I could not confidently identify that exact song.');
+    }
+    if (!mashupMode && !sameIdentity(parsed, verifiedIdentity)) {
+      throw new Error(`Gemini returned a different song than requested. Expected "${verifiedIdentity?.title}" by "${verifiedIdentity?.artist}", so I stopped instead of saving the wrong result.`);
+    }
+    parsed = normalizeContentField(parsed);
 
     parsed.source = 'ai';
     parsed.language = language;
@@ -444,7 +740,7 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
   }
 };
 
-// ─── Complete Song from Lyrics (Gemini 3.1 Pro) ───────────────────────
+// ─── Complete Song from Lyrics (Gemini Pro) ────────────────────────────
 
 export const completeSongFromLyrics = async (partialLyrics: string, language: AppLanguage = 'English'): Promise<any> => {
   try {

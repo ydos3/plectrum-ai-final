@@ -21,6 +21,125 @@ export interface SyncedLine {
 
 // ─── LRCLIB: Free Synced Lyrics Database ───────────────────────────────
 
+const COMMON_SEARCH_WORDS = new Set([
+  'a', 'an', 'and', 'by', 'for', 'from', 'in', 'is', 'me', 'my', 'of', 'on', 'song', 'the', 'to',
+  'lyrics', 'lyric', 'chords', 'guitar', 'karaoke', 'official', 'audio', 'video', 'make', 'easy',
+  'easier', 'beginner', 'open', 'barre', 'capo', 'with', 'without', 'use',
+  'hai', 'hain', 'ka', 'ke', 'ki', 'ko', 'se', 'mein', 'main', 'mai', 'tu', 'tere', 'liye'
+]);
+
+export const normalizeSongSearchText = (value: string = '') => (
+  value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u200B-\u200D\uFEFF\u2060]/g, '')
+    .replace(/[’‘`]/g, "'")
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\u0900-\u097F]+/gi, ' ')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ')
+);
+
+const tokenize = (value: string) => (
+  normalizeSongSearchText(value)
+    .split(' ')
+    .filter(Boolean)
+);
+
+const significantTokens = (value: string) => (
+  tokenize(value).filter(token => token.length > 2 && !COMMON_SEARCH_WORDS.has(token))
+);
+
+const compact = (value: string) => normalizeSongSearchText(value).replace(/\s+/g, '');
+
+const bigrams = (value: string) => {
+  const clean = compact(value);
+  const grams: string[] = [];
+  for (let i = 0; i < clean.length - 1; i += 1) grams.push(clean.slice(i, i + 2));
+  return grams;
+};
+
+const diceCoefficient = (a: string, b: string) => {
+  const aGrams = bigrams(a);
+  const bGrams = bigrams(b);
+  if (aGrams.length === 0 || bGrams.length === 0) return a === b ? 1 : 0;
+
+  const bCounts = new Map<string, number>();
+  bGrams.forEach(gram => bCounts.set(gram, (bCounts.get(gram) || 0) + 1));
+
+  let intersection = 0;
+  for (const gram of aGrams) {
+    const count = bCounts.get(gram) || 0;
+    if (count > 0) {
+      intersection += 1;
+      bCounts.set(gram, count - 1);
+    }
+  }
+
+  return (2 * intersection) / (aGrams.length + bGrams.length);
+};
+
+const includesAllTokens = (haystack: string, tokens: string[]) => {
+  const haystackTokens = new Set(tokenize(haystack));
+  return tokens.length > 0 && tokens.every(token => haystackTokens.has(token));
+};
+
+const lyricMatchScore = (query: string, lyrics?: string | null) => {
+  if (!lyrics) return 0;
+  const queryText = normalizeSongSearchText(query);
+  const lyricsText = normalizeSongSearchText(lyrics);
+  if (!queryText || !lyricsText) return 0;
+
+  const queryCompact = compact(queryText);
+  const lyricsCompact = compact(lyricsText);
+  if (queryCompact.length >= 14 && lyricsCompact.includes(queryCompact)) return 0.86;
+
+  const tokens = significantTokens(queryText);
+  if (tokens.length >= 3) {
+    const lyricTokens = new Set(tokenize(lyricsText));
+    const exactMatches = tokens.filter(token => lyricTokens.has(token)).length;
+    const ratio = exactMatches / tokens.length;
+    if (ratio >= 0.75) return 0.72;
+    if (ratio >= 0.5 && tokens.length >= 4) return 0.56;
+  }
+
+  if (queryCompact.length >= 14) {
+    const windowSize = Math.min(Math.max(queryCompact.length + 6, 18), 90);
+    let bestSimilarity = 0;
+    for (let i = 0; i < lyricsCompact.length; i += Math.max(1, Math.floor(windowSize / 3))) {
+      const window = lyricsCompact.slice(i, i + windowSize);
+      bestSimilarity = Math.max(bestSimilarity, diceCoefficient(queryCompact, window));
+      if (bestSimilarity >= 0.72) return 0.62;
+    }
+  }
+
+  return 0;
+};
+
+const scoreTrackForQuery = (query: string, track: LRCLibTrack) => {
+  const normalizedQuery = normalizeSongSearchText(query);
+  const normalizedTitle = normalizeSongSearchText(track.trackName);
+  const titleTokens = significantTokens(track.trackName);
+  const artistTokens = significantTokens(track.artistName);
+
+  let score = 0;
+  if (normalizedQuery === normalizedTitle) score += 0.8;
+  if (normalizedTitle.length > 1 && normalizedQuery.includes(normalizedTitle)) score += 0.48;
+  if (includesAllTokens(normalizedQuery, titleTokens)) score += 0.22;
+  if (artistTokens.length > 0 && includesAllTokens(normalizedQuery, artistTokens)) score += 0.28;
+
+  const titleSimilarity = diceCoefficient(normalizedQuery, normalizedTitle);
+  if (titleSimilarity >= 0.9) score += 0.42;
+  else if (titleSimilarity >= 0.75) score += 0.22;
+
+  score += lyricMatchScore(query, track.plainLyrics);
+  if (track.syncedLyrics) score += 0.04;
+  if (!track.instrumental && track.plainLyrics) score += 0.04;
+
+  return Math.min(score, 1);
+};
+
 const LRCLIB_BASE = 'https://lrclib.net/api';
 
 export const searchLRCLIB = async (query: string): Promise<LRCLibTrack[]> => {
@@ -125,19 +244,20 @@ export const searchSongDatabase = async (query: string): Promise<DatabaseSongRes
     return null;
   }
 
-  // Pick best match (first non-instrumental result)
-  let best = results.find(r => !r.instrumental) || results[0];
+  const scored = results
+    .filter(r => !r.instrumental && (r.plainLyrics || r.syncedLyrics))
+    .map(track => ({ track, score: scoreTrackForQuery(query, track) }))
+    .sort((a, b) => b.score - a.score);
 
-  // Enforce Exact Match Prioritization if available
-  const exactMatch = results.find(r => 
-    !r.instrumental && 
-    r.trackName.toLowerCase() === query.toLowerCase()
-  );
-  if (exactMatch) {
-    best = exactMatch;
+  const bestScored = scored[0];
+  if (!bestScored || bestScored.score < 0.45) {
+    console.log('[SongDB] LRCLIB results were too uncertain, falling back to AI identity resolution');
+    return null;
   }
 
-  console.log('[SongDB] LRCLIB hit:', best.trackName, '-', best.artistName);
+  const best = bestScored.track;
+
+  console.log('[SongDB] LRCLIB hit:', best.trackName, '-', best.artistName, `(score ${bestScored.score.toFixed(2)})`);
 
   const songResult: DatabaseSongResult = {
     source: 'lrclib',

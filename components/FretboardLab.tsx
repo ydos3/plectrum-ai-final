@@ -28,9 +28,9 @@ const PRESET_CHORDS = {
 const PRESET_FINGERSTYLE = {
     title: "Standard Fingerstyle",
     mode: 'FINGERSTYLE' as InputMode,
-    text: "B1 - B3 - A3 / e0 - e0 - e0-e0-B3-B1-B0-A0/B1-G2-G2-G2-G2-B0-E1/B1-B1-B1-B1-B1-B0-G2-G0-E3/G2pE3/G4-G0-G0-G0-G0",
+    text: "B0-h-B1-s-B3-e5-A5-G0-e3/B3--A5-G0/B3/e3-pulloff-e2-B3-B1- -E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-G0-B1-E0-B0-D2-G2-E0-D2-B0-G2-A5-D4-G2-D4-B0-h-B1-s-B3-e5-A5-G0-e3/B3--A5-G0/B3/e3-pulloff-e2-B3-B1- -E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-G0-B1-E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-E3-B0-h-B1-E0-D2-B0-G2-E0-D2-B0-G2",
     pattern: "",
-    capo: 0
+    capo: 3
 };
 
 const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
@@ -40,7 +40,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   const [strumPattern, setStrumPattern] = useState(''); 
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
-  const [capoPosition, setCapoPosition] = useState(0);
+  const [capoPosition, setCapoPosition] = useState(PRESET_FINGERSTYLE.capo);
 
   const [activeNotes, setActiveNotes] = useState<{string: number, fret: number}[]>([]);
   

@@ -55,6 +55,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
     const [practiceTips, setPracticeTips] = useState<string[]>(songToEdit?.practiceTips || []);
     const [chordSimplifications, setChordSimplifications] = useState(songToEdit?.chordSimplifications || []);
     const [karaokeUrl, setKaraokeUrl] = useState(songToEdit?.karaokeUrl || '');
+    const [timedLyrics, setTimedLyrics] = useState<Song['timedLyrics']>(songToEdit?.timedLyrics);
     const [showPreviewPlayer, setShowPreviewPlayer] = useState(false);
 
     // UI State
@@ -108,6 +109,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             setChordSimplifications([]);
             setDurationStr('');
             setKaraokeUrl('');
+            setTimedLyrics(undefined);
             setLanguageFallbackMessage('');
         } else {
             setTitle(songToEdit.title);
@@ -122,6 +124,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             setChordSimplifications(songToEdit.chordSimplifications || []);
             setDurationStr(formatTime(songToEdit.duration));
             setKaraokeUrl(songToEdit.karaokeUrl || '');
+            setTimedLyrics(songToEdit.timedLyrics);
             setLanguageFallbackMessage('');
         }
     }, [songToEdit, initialContent]);
@@ -216,6 +219,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
                 if (data.releaseDate) setReleaseDate(data.releaseDate);
                 if (data.karaokeUrl) setKaraokeUrl(data.karaokeUrl);
                 if (data.duration) setDurationStr(formatTime(data.duration));
+                setTimedLyrics(Array.isArray(data.timedLyrics) ? data.timedLyrics : undefined);
                 setLanguageFallbackMessage(data.languageFallbackReason || '');
 
                 setShowMagicTools(false);
@@ -370,6 +374,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             chordSimplifications,
             karaokeUrl: karaokeUrl,
             language: selectedLanguage,
+            timedLyrics,
             duration: parseDuration(durationStr),
             createdAt: songToEdit?.createdAt || Date.now(),
         };

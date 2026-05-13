@@ -13,29 +13,63 @@ interface PracticeRoomProps {
 
 type VideoFilter = 'none' | 'warm' | 'stage' | 'noir' | 'soft';
 
+const PRACTICE_ROOM_STATE_KEY = 'plectrum_practice_room_state_v1';
+
+type PersistedPracticeRoomState = {
+  selectedSongId?: string;
+  activeFilter?: VideoFilter;
+  bgBlur?: boolean;
+  ringLight?: boolean;
+  splitRatio?: number;
+  isVaultOpen?: boolean;
+  scrollSpeed?: number;
+  fontSize?: number;
+};
+
+const readPracticeRoomState = (): PersistedPracticeRoomState => {
+  try {
+    return JSON.parse(localStorage.getItem(PRACTICE_ROOM_STATE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const clampNumber = (value: unknown, fallback: number, min: number, max: number) => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+};
+
+const resolveInitialSong = (initialSong?: Song) => {
+  if (initialSong) return initialSong;
+  const persisted = readPracticeRoomState();
+  if (!persisted.selectedSongId) return null;
+  return getSongs().find(song => String(song.id) === String(persisted.selectedSongId)) || null;
+};
+
 const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initialSong, onBack }) => {
+  const persistedState = useRef<PersistedPracticeRoomState>(readPracticeRoomState());
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [timer, setTimer] = useState(0);
   const [recordings, setRecordings] = useState<Recording[]>([]);
-  const [selectedSong, setSelectedSong] = useState<Song | null>(initialSong || null);
+  const [selectedSong, setSelectedSong] = useState<Song | null>(() => resolveInitialSong(initialSong));
   const [showSongSelector, setShowSongSelector] = useState(false);
   
   // Studio Settings
   const [showSettings, setShowSettings] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<VideoFilter>('none');
-  const [bgBlur, setBgBlur] = useState(false);
-  const [ringLight, setRingLight] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<VideoFilter>(() => persistedState.current.activeFilter || 'none');
+  const [bgBlur, setBgBlur] = useState(() => Boolean(persistedState.current.bgBlur));
+  const [ringLight, setRingLight] = useState(() => Boolean(persistedState.current.ringLight));
   
   // Layout State
-  const [splitRatio, setSplitRatio] = useState(45); // % for Video
+  const [splitRatio, setSplitRatio] = useState(() => clampNumber(persistedState.current.splitRatio, 45, 20, 80)); // % for Video
   const [isLandscape, setIsLandscape] = useState(true);
-  const [isVaultOpen, setIsVaultOpen] = useState(true); 
+  const [isVaultOpen, setIsVaultOpen] = useState(() => persistedState.current.isVaultOpen !== false); 
   
   // Teleprompter State
   const [isScrolling, setIsScrolling] = useState(false);
-  const [scrollSpeed, setScrollSpeed] = useState(1);
-  const [fontSize, setFontSize] = useState(20);
+  const [scrollSpeed, setScrollSpeed] = useState(() => clampNumber(persistedState.current.scrollSpeed, 1, 0.5, 3));
+  const [fontSize, setFontSize] = useState(() => clampNumber(persistedState.current.fontSize, 20, 12, 32));
   const lyricsRef = useRef<HTMLDivElement>(null);
   const scrollIntervalRef = useRef<number | null>(null);
 
@@ -49,6 +83,24 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
   useEffect(() => {
       if (initialSong) setSelectedSong(initialSong);
   }, [initialSong]);
+
+  useEffect(() => {
+      localStorage.setItem(PRACTICE_ROOM_STATE_KEY, JSON.stringify({
+          selectedSongId: selectedSong?.id,
+          activeFilter,
+          bgBlur,
+          ringLight,
+          splitRatio,
+          isVaultOpen,
+          scrollSpeed,
+          fontSize
+      }));
+  }, [selectedSong?.id, activeFilter, bgBlur, ringLight, splitRatio, isVaultOpen, scrollSpeed, fontSize]);
+
+  useEffect(() => {
+      if (lyricsRef.current) lyricsRef.current.scrollTop = 0;
+      setIsScrolling(false);
+  }, [selectedSong?.id]);
 
   // Canvas Drawing Loop (The Magic for Filters)
   useEffect(() => {
@@ -174,14 +226,14 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
       if (isScrolling) {
           let lastFrame = performance.now();
           const scrollLoop = (frameTime: number) => {
-              const deltaSeconds = Math.max(0, (frameTime - lastFrame) / 1000);
+              const deltaSeconds = Math.min(Math.max(0, (frameTime - lastFrame) / 1000), 0.05);
               lastFrame = frameTime;
               if (lyricsRef.current) {
                   if (lyricsRef.current.scrollTop + lyricsRef.current.clientHeight >= lyricsRef.current.scrollHeight - 1) {
                       setIsScrolling(false);
                       return;
                   }
-                  lyricsRef.current.scrollTop += scrollSpeed * 18 * deltaSeconds;
+                  lyricsRef.current.scrollTop += scrollSpeed * 42 * deltaSeconds;
               }
               scrollIntervalRef.current = requestAnimationFrame(scrollLoop);
           };
@@ -519,14 +571,20 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
                             {isScrolling ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                          </button>
                      </div>
-                     <input type="range" min="0.1" max="5.0" step="0.1" value={scrollSpeed} onChange={e => setScrollSpeed(parseFloat(e.target.value))} className="w-full h-1 bg-slate-800 rounded-lg accent-amber-500 cursor-pointer" />
+                     <div className="flex items-center gap-3">
+                        <input type="range" min="0.5" max="3" step="0.5" value={scrollSpeed} onChange={e => setScrollSpeed(parseFloat(e.target.value))} className="w-full h-1 bg-slate-800 rounded-lg accent-amber-500 cursor-pointer" />
+                        <span className="w-10 text-right text-[10px] font-black text-amber-400 tabular-nums">{scrollSpeed.toFixed(1)}x</span>
+                     </div>
                 </div>
               )}
           </div>
 
           <div 
             ref={lyricsRef}
-            className="flex-1 overflow-y-auto p-4 bg-[#0a0503] relative scroll-smooth custom-scrollbar bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-black via-[#0a0503] to-black"
+            onWheel={() => setIsScrolling(false)}
+            onTouchStart={() => setIsScrolling(false)}
+            onPointerDown={() => setIsScrolling(false)}
+            className="flex-1 overflow-y-auto overscroll-contain p-4 bg-[#0a0503] relative custom-scrollbar bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-black via-[#0a0503] to-black"
           >
               {selectedSong ? (
                   <div className="pb-[80vh]">

@@ -12,6 +12,7 @@ import PracticeRoom from './components/PracticeRoom';
 import { Song, ViewState, User, AppLanguage, SkillLevel } from './types';
 import { getCurrentUser, login } from './services/authService';
 import { playNextGlobalLoopChord, resumeAudio } from './services/audioService';
+import { getSongs } from './services/storageService';
 import { ArrowRight, Clock, Thermometer } from 'lucide-react';
 import PlectrumLogo from './components/PlectrumLogo';
 import { Star, Music2, Crown } from 'lucide-react';
@@ -27,6 +28,27 @@ const QUOTES = [
     "The guitar is the most complete instrument.",
     "Your fingers remember what your mind forgets."
 ];
+
+const APP_STATE_KEY = 'plectrum_app_state_v1';
+
+type PersistedAppState = {
+    currentView?: ViewState;
+    selectedSongId?: string;
+    scannedContent?: string;
+    showTour?: boolean;
+};
+
+const readPersistedAppState = (): PersistedAppState => {
+    try {
+        return JSON.parse(localStorage.getItem(APP_STATE_KEY) || '{}');
+    } catch {
+        return {};
+    }
+};
+
+const viewNeedsSong = (view?: ViewState) => (
+    view === 'TELEPROMPTER' || view === 'FRETBOARD_LAB' || view === 'PRACTICE_ROOM'
+);
 
 const App: React.FC = () => {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -87,8 +109,20 @@ const App: React.FC = () => {
         // Auth Check
         const user = getCurrentUser();
         if (user) {
+            const persistedState = readPersistedAppState();
+            const songs = getSongs();
+            const restoredSong = persistedState.selectedSongId
+                ? songs.find(song => String(song.id) === String(persistedState.selectedSongId))
+                : undefined;
+            const restoredView = persistedState.currentView && persistedState.currentView !== 'AUTH'
+                ? persistedState.currentView
+                : 'LIBRARY';
+
             setCurrentUser(user);
-            setCurrentView('LIBRARY');
+            setSelectedSong(restoredSong);
+            setScannedContent(persistedState.scannedContent);
+            setShowTour(Boolean(persistedState.showTour));
+            setCurrentView(viewNeedsSong(restoredView) && !restoredSong ? 'LIBRARY' : restoredView);
         } else {
             setCurrentView('AUTH');
             setAuthStep('LANDING');
@@ -99,6 +133,17 @@ const App: React.FC = () => {
             clearInterval(quoteTimer);
         }
     }, []);
+
+    useEffect(() => {
+        if (!currentUser) return;
+        const stateToPersist: PersistedAppState = {
+            currentView,
+            selectedSongId: selectedSong?.id,
+            scannedContent,
+            showTour
+        };
+        localStorage.setItem(APP_STATE_KEY, JSON.stringify(stateToPersist));
+    }, [currentUser, currentView, selectedSong?.id, scannedContent, showTour]);
 
     const handleLanguageChange = (lang: AppLanguage) => {
         setSelectedLanguage(lang);

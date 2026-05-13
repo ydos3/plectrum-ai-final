@@ -12,20 +12,46 @@ interface TeleprompterProps {
   onClose: () => void;
 }
 
+const TELEPROMPTER_STATE_KEY = 'plectrum_teleprompter_state_v1';
+
+type PersistedTeleprompterState = {
+  karaokeEnabled?: boolean;
+  playbackSpeed?: number;
+  fontSize?: number;
+  handedness?: Handedness;
+  syncOffset?: number;
+};
+
+const readTeleprompterState = (): PersistedTeleprompterState => {
+  try {
+    return JSON.parse(localStorage.getItem(TELEPROMPTER_STATE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const clampNumber = (value: unknown, fallback: number, min: number, max: number) => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+};
+
 const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
-  const [karaokeEnabled, setKaraokeEnabled] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const persistedState = useRef<PersistedTeleprompterState>(readTeleprompterState());
+  const [karaokeEnabled, setKaraokeEnabled] = useState(() => Boolean(persistedState.current.karaokeEnabled));
+  const [playbackSpeed, setPlaybackSpeed] = useState(() => clampNumber(persistedState.current.playbackSpeed, 1, 0.1, 3));
   
   // SPOTIFY-STYLE SCROLL STATE
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeLineIndex, setActiveLineIndex] = useState(-1);
-  const [fontSize, setFontSize] = useState(24); 
+  const [fontSize, setFontSize] = useState(() => clampNumber(persistedState.current.fontSize, 24, 16, 72)); 
   const [selectedChord, setSelectedChord] = useState<string | null>(null);
-  const [handedness, setHandedness] = useState<Handedness>('Right');
+  const [handedness, setHandedness] = useState<Handedness>(() => persistedState.current.handedness === 'Left' ? 'Left' : 'Right');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollTimerRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(0);
+  const activeLineIndexRef = useRef<number>(-1);
+  const manualScrollHoldUntilRef = useRef(0);
 
   // KARAOKE/YOUTUBE STATE
   const [currentTime, setCurrentTime] = useState(0);
@@ -36,7 +62,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const [videoErrorMessage, setVideoErrorMessage] = useState('');
   const [playerReady, setPlayerReady] = useState(false);
   const [isMashupMode, setIsMashupMode] = useState(false);
-  const [syncOffset, setSyncOffset] = useState(0);
+  const [syncOffset, setSyncOffset] = useState(() => clampNumber(persistedState.current.syncOffset, 0, -30, 30));
 
   const [fallbackLevel, setFallbackLevel] = useState(1); 
   const [iframeKey, setIframeKey] = useState(0); 
@@ -48,6 +74,24 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const activeVideoId = (fallbackLevel === 2 && !isMashupMode)
     ? extractYouTubeVideoId(videoUrl)
     : dynamicVideoId;
+
+  useEffect(() => {
+    localStorage.setItem(TELEPROMPTER_STATE_KEY, JSON.stringify({
+      karaokeEnabled,
+      playbackSpeed,
+      fontSize,
+      handedness,
+      syncOffset
+    }));
+  }, [karaokeEnabled, playbackSpeed, fontSize, handedness, syncOffset]);
+
+  useEffect(() => {
+    activeLineIndexRef.current = activeLineIndex;
+  }, [activeLineIndex]);
+
+  const holdAutoScrollForManualLookahead = useCallback(() => {
+    manualScrollHoldUntilRef.current = Date.now() + 4000;
+  }, []);
 
   // ─── Parse Song Content ────────────────────────────────────────────
 
@@ -192,6 +236,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   const scrollToTime = useCallback((time: number, timings: number[]) => {
     if (!scrollContainerRef.current) return;
+    if (Date.now() < manualScrollHoldUntilRef.current) return;
 
     let currentIdx = -1;
     let nextIdx = -1;
@@ -240,7 +285,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   }, []);
 
   useEffect(() => {
-    if (karaokeEnabled || !isPlaying) {
+    if (!isPlaying) {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
       return;
     }
@@ -253,12 +298,18 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       const deltaTime = Math.min(Math.max(0, (frameTime - lastFrameTime) / 1000), 0.1);
       lastFrameTime = frameTime;
 
-      const nextTime = currentTimeRef.current + (deltaTime * playbackSpeed);
+      const videoTime = karaokeEnabled && playerReady && playerRef.current?.getCurrentTime
+        ? playerRef.current.getCurrentTime() + syncOffset
+        : null;
+      const nextTime = typeof videoTime === 'number' && Number.isFinite(videoTime)
+        ? videoTime
+        : currentTimeRef.current + (deltaTime * playbackSpeed);
       currentTimeRef.current = nextTime;
       setCurrentTime(nextTime);
 
       const newActiveIdx = getActiveLineForTime(nextTime, timings);
-      if (newActiveIdx >= 0 && newActiveIdx !== activeLineIndex) {
+      if (newActiveIdx >= 0 && newActiveIdx !== activeLineIndexRef.current) {
+        activeLineIndexRef.current = newActiveIdx;
         setActiveLineIndex(newActiveIdx);
       }
       scrollToTime(nextTime, timings);
@@ -276,11 +327,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
     };
-  }, [isPlaying, karaokeEnabled, playbackSpeed, activeLineIndex, actualDuration, getLineTimings, getActiveLineForTime, scrollToTime]);
+  }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, syncOffset, getLineTimings, getActiveLineForTime, scrollToTime]);
 
-  // If YouTube is playing, sync from video time
+  // Keep the lyric clock aligned to YouTube while paused. During karaoke playback, the main loop follows YouTube time.
   useEffect(() => {
-    if (!karaokeEnabled || !playerReady) return;
+    if (!karaokeEnabled || !playerReady || isPlaying) return;
 
     const timings = getLineTimings();
 
@@ -292,15 +343,15 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         
         const newActiveIdx = getActiveLineForTime(videoTime, timings);
 
-        if (newActiveIdx !== activeLineIndex && newActiveIdx >= 0) {
+        if (newActiveIdx !== activeLineIndexRef.current && newActiveIdx >= 0) {
+          activeLineIndexRef.current = newActiveIdx;
           setActiveLineIndex(newActiveIdx);
         }
-        scrollToTime(videoTime, timings);
       }
     }, 80);
 
     return () => clearInterval(syncInterval);
-  }, [karaokeEnabled, playerReady, syncOffset, activeLineIndex, scrollToTime, getLineTimings, getActiveLineForTime]);
+  }, [karaokeEnabled, playerReady, isPlaying, syncOffset, getLineTimings, getActiveLineForTime]);
 
   // Removed YouTube playback speed link to teleprompter speed
 
@@ -421,6 +472,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                   if (event.data === 1) {
                        setPlayerReady(true);
                        setVideoError(false);
+                       const videoTime = event.target?.getCurrentTime ? event.target.getCurrentTime() + syncOffset : currentTimeRef.current;
+                       currentTimeRef.current = videoTime;
+                       setCurrentTime(videoTime);
+                       setIsPlaying(true);
+                  } else if (event.data === 2 || event.data === 0) {
+                       setIsPlaying(false);
                   }
               }
           }
@@ -603,12 +660,27 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   };
 
   const handlePlayPause = () => {
-    if (!isPlaying && activeLineIndex < 0) {
+    let startedFromVideo = false;
+    if (!isPlaying && karaokeEnabled && playerReady && playerRef.current?.getCurrentTime) {
+      const videoTime = playerRef.current.getCurrentTime() + syncOffset;
+      currentTimeRef.current = videoTime;
+      setCurrentTime(videoTime);
+      const timings = getLineTimings();
+      const syncedLine = getActiveLineForTime(videoTime, timings);
+      if (syncedLine >= 0) {
+        activeLineIndexRef.current = syncedLine;
+        setActiveLineIndex(syncedLine);
+        startedFromVideo = true;
+      }
+    }
+
+    if (!isPlaying && activeLineIndex < 0 && !startedFromVideo) {
       const timings = getLineTimings();
       const firstLine = timings.findIndex(t => t >= 0);
       const startTime = firstLine >= 0 ? timings[firstLine] : 0;
       currentTimeRef.current = startTime;
       setCurrentTime(startTime);
+      activeLineIndexRef.current = firstLine >= 0 ? firstLine : 0;
       setActiveLineIndex(firstLine >= 0 ? firstLine : 0);
       if (firstLine >= 0) scrollToLine(firstLine);
     }
@@ -697,7 +769,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
       <div className={`flex-1 min-h-0 overflow-hidden relative flex ${karaokeEnabled ? 'flex-col md:flex-row' : ''}`}>
          <div className={`min-h-0 relative transition-all duration-500 ${karaokeEnabled ? 'flex-1 md:w-2/3 border-r border-white/[0.05] order-2 md:order-1' : 'w-full h-full'}`}>
-             <div ref={scrollContainerRef} className="h-full overflow-y-auto relative custom-scrollbar pb-32">
+             <div
+               ref={scrollContainerRef}
+               onWheel={holdAutoScrollForManualLookahead}
+               onTouchStart={holdAutoScrollForManualLookahead}
+               onPointerDown={holdAutoScrollForManualLookahead}
+               className="h-full overflow-y-auto relative custom-scrollbar pb-32"
+             >
                  <div className="min-h-screen pt-28 pb-28 md:pt-40 md:pb-24 px-3 sm:px-5 md:px-12 lg:px-20 mx-auto relative z-10 max-w-4xl">
                      {/* Spacer so first line can center */}
                      <div className="h-[40vh]"></div>
