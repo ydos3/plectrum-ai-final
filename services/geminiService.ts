@@ -16,9 +16,9 @@ const isMissingApiKeyError = (error: unknown) => (
 );
 
 const MODELS = {
-  PRO: "gemini-3-pro-preview",          // Best available quality. Falls back to 2.5 Pro if unavailable.
+  PRO: "gemini-3.1-pro-preview",          // Best available quality. Falls back to 2.5 Pro if unavailable.
   PRO_FALLBACK: "gemini-2.5-pro",
-  FLASH: "gemini-3-flash-preview",      // Fast identity/search work. Falls back to 2.5 Flash if unavailable.
+  FLASH: "gemini-3.1-flash-preview",      // Fast identity/search work. Falls back to 2.5 Flash if unavailable.
   FLASH_FALLBACK: "gemini-2.5-flash",
   GLM_FLASH: "glm-4-flash",             // Zhipu free fallback
 } as const;
