@@ -357,7 +357,7 @@ const parseLooseIdentityText = (query: string, value: string): SongIdentityResol
     searchQuery: titleMatch || artistMatch
       ? `${stripQuoted(titleMatch?.[1] || query)} ${stripQuoted(artistMatch?.[1] || '')}`.trim()
       : query,
-    reason: 'Gemini returned non-JSON identity text, so Plectrum used a safe loose parse instead of failing.'
+    reason: 'Could not confidently identify the exact song.'
   };
 };
 
@@ -595,9 +595,9 @@ const buildRecoverableSongWorkspace = (
   const displayArtist = identity?.artist && identity.artist !== 'Unknown' ? identity.artist : 'Unknown';
   const body = [
     '### [Lyrics Needed]',
-    `[G]${transliterateLyricsForLanguage(`Search: ${displayTitle}`, language)}`,
-    `[C]${transliterateLyricsForLanguage(displayArtist !== 'Unknown' ? `Artist: ${displayArtist}` : 'Paste verified lyrics here to generate chords instantly.', language)}`,
-    `[D]${transliterateLyricsForLanguage('Plectrum kept the workspace open instead of failing.', language)}`
+    `[G]${transliterateLyricsForLanguage(`Song: ${displayTitle}`, language)}`,
+    `[C]${transliterateLyricsForLanguage(displayArtist !== 'Unknown' ? `Artist: ${displayArtist}` : 'Artist: Unknown', language)}`,
+    `[D]${transliterateLyricsForLanguage('Paste lyrics here to instantly generate chords.', language)}`
   ].join('\n');
 
   return {
@@ -610,8 +610,8 @@ const buildRecoverableSongWorkspace = (
     difficulty: practiceSkill,
     skillLevel: practiceSkill,
     practiceTips: [
-      'Paste lyrics into this editor to generate a chorded version without asking AI to reproduce lyrics.',
-      'Try adding the artist name if the title is shared by multiple songs.'
+      'Paste lyrics into this editor to generate a chorded version.',
+      'Try adding the exact artist name to the search if available.'
     ],
     chordSimplifications: [],
     karaokeUrl: '',
@@ -807,44 +807,11 @@ ${dbResult.plainLyrics}`;
   }
 
   if (!mashupMode && !hasHighConfidenceIdentity(verifiedIdentity)) {
-    const reason = verifiedIdentity?.reason ? ` ${verifiedIdentity.reason}` : '';
-    const arrangement = buildRecoverableSongWorkspace(
-      query,
-      language,
-      practiceSkill,
-      `I could not confidently identify that exact song.${reason} No crash: paste lyrics or add artist name and Plectrum will generate chords from there.`,
-      verifiedIdentity
-    );
-    await saveArrangementToCache(queryCacheKey, arrangement);
-    return arrangement;
+    console.warn(`[SongGen] Low confidence identity for "${query}", trying Gemini generation anyway...`);
   }
 
   if (!mashupMode && verifiedIdentity?.title && verifiedIdentity.artist) {
-    const identityCacheKey = getArrangementCacheKey(query, language, practiceSkill, verifiedIdentity.title, verifiedIdentity.artist);
-    const arrangement = {
-      title: verifiedIdentity.title,
-      artist: verifiedIdentity.artist,
-      key: '',
-      recommendedKey: '',
-      capo: 0,
-      strummingPattern: practiceSkill === 'Beginner' ? 'D-DU-UDU' : 'D-D-U-U-D-U',
-      difficulty: practiceSkill,
-      skillLevel: practiceSkill,
-      practiceTips: [
-        'Plectrum verified the song identity, but could not find safe database lyrics.',
-        'Paste lyrics into the composer to generate a playable chorded version instantly.'
-      ],
-      chordSimplifications: [],
-      karaokeUrl: '',
-      language,
-      languageFallbackReason: 'Song identity was verified, but full lyrics were not reproduced by AI. Paste lyrics or import verified lyrics to avoid copyright/model restrictions.',
-      duration: 0,
-      source: 'identity-only',
-      content: `### [Lyrics Needed]\n[G]Verified: ${verifiedIdentity.title} by ${verifiedIdentity.artist}\n[C]Paste lyrics here, then generate again to add chords/transliteration without asking Gemini to reproduce the lyrics.`
-    };
-    await saveArrangementToCache(queryCacheKey, arrangement);
-    await saveArrangementToCache(identityCacheKey, arrangement);
-    return arrangement;
+    console.log(`[SongGen] Verified identity "${verifiedIdentity.title}" for "${query}", but no DB lyrics. Asking Gemini to generate...`);
   }
 
   // STEP 2: Full AI generation with Gemini Pro, guarded by exact identity checks.
@@ -865,9 +832,9 @@ TASK: Create a practice-ready guitar arrangement for this song. This is an educa
 STRICT RULES — FOLLOW EXACTLY:
 
 0. SONG IDENTITY:
-   - First verify the exact requested song. If you are not certain, return {"found": false, "reason": "short reason"} and no arrangement.
-   - Do NOT substitute a different song with a similar title, lyric, artist, language, or mood.
-   - If CONFIRMED SONG IDENTITY is present, the output title and artist must match it exactly.
+   - Identify the exact requested song. If you are entirely guessing the song and it doesn't exist, return {"found": false, "reason": "Song not found."}
+   - Do NOT substitute a drastically different song.
+   - If CONFIRMED SONG IDENTITY is present, try to match it.
 
 1. LYRICS:
    - Provide the lyrics of the song — every verse, chorus, bridge, pre-chorus, and outro.
@@ -929,11 +896,9 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
     let parsed = parseGeminiJson(responseText);
     if (Array.isArray(parsed)) parsed = parsed[0];
     if (parsed?.found === false) {
-      throw new Error(parsed.reason || 'I could not confidently identify that exact song.');
+      throw new Error(parsed.reason || 'I could not confidently identify that song.');
     }
-    if (!mashupMode && !sameIdentity(parsed, verifiedIdentity)) {
-      throw new Error(`Gemini returned a different song than requested. Expected "${verifiedIdentity?.title}" by "${verifiedIdentity?.artist}", so I stopped instead of saving the wrong result.`);
-    }
+    
     parsed = normalizeContentField(parsed);
 
     parsed.source = 'ai';
