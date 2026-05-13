@@ -104,6 +104,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const currentTimeRef = useRef<number>(0);
   const activeLineIndexRef = useRef<number>(-1);
   const manualScrollHoldUntilRef = useRef(0);
+  const videoAnchorRef = useRef({ videoTime: 0, lyricTime: 0 });
 
   // KARAOKE/YOUTUBE STATE
   const [currentTime, setCurrentTime] = useState(0);
@@ -330,7 +331,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         ? playerRef.current.getCurrentTime() + syncOffset
         : null;
       const nextTime = typeof rawVideoTime === 'number' && Number.isFinite(rawVideoTime)
-        ? rawVideoTime
+        ? videoAnchorRef.current.lyricTime + ((rawVideoTime - videoAnchorRef.current.videoTime) * playbackSpeed)
         : currentTimeRef.current + (deltaTime * playbackSpeed);
       const clampedTime = Math.min(actualDuration, Math.max(0, nextTime));
       currentTimeRef.current = clampedTime;
@@ -383,15 +384,6 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => clearInterval(syncInterval);
   }, [karaokeEnabled, playerReady, isPlaying, syncOffset, actualDuration, getLineTimings, getActiveLineForTime, scrollToProgress]);
 
-  useEffect(() => {
-    if (!karaokeEnabled || !playerReady || !playerRef.current?.setPlaybackRate) return;
-    try {
-      playerRef.current.setPlaybackRate(playbackSpeed);
-    } catch (error) {
-      console.warn('Could not update YouTube playback speed', error);
-    }
-  }, [karaokeEnabled, playerReady, playbackSpeed]);
-
   // ─── YouTube Setup ─────────────────────────────────────────────────
 
   useEffect(() => {
@@ -401,6 +393,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setIsMashupMode(detectedMashup);
     setActualDuration(getInitialDuration(song));
     currentTimeRef.current = 0;
+    videoAnchorRef.current = { videoTime: 0, lyricTime: 0 };
     
     const initialQuery = detectedMashup 
         ? `${song.title} mashup` 
@@ -534,6 +527,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                        setVideoError(false);
                        const videoTime = event.target?.getCurrentTime ? event.target.getCurrentTime() + syncOffset : currentTimeRef.current;
                        const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
+                       videoAnchorRef.current = {
+                         videoTime: clampedTime,
+                         lyricTime: currentTimeRef.current || clampedTime
+                       };
                        currentTimeRef.current = currentTimeRef.current || clampedTime;
                        setCurrentTime(currentTimeRef.current);
                        setIsPlaying(true);
@@ -611,7 +608,17 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   };
 
   const updatePlaybackSpeed = (delta: number) => {
-    setPlaybackSpeed(speed => Math.max(0.1, Math.min(3, Math.round((speed + delta) * 10) / 10)));
+    setPlaybackSpeed(speed => {
+      const nextSpeed = Math.max(0.1, Math.min(3, Math.round((speed + delta) * 20) / 20));
+      if (karaokeEnabled && playerReady && playerRef.current?.getCurrentTime) {
+        const videoTime = Math.min(actualDuration, Math.max(0, playerRef.current.getCurrentTime() + syncOffset));
+        videoAnchorRef.current = {
+          videoTime,
+          lyricTime: currentTimeRef.current
+        };
+      }
+      return nextSpeed;
+    });
   };
   // ─── Spotify-Style Line Rendering ──────────────────────────────────
 
@@ -678,6 +685,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                     if (lineTime >= 0) {
                       currentTimeRef.current = lineTime;
                       setCurrentTime(lineTime);
+                      videoAnchorRef.current = { videoTime: lineTime, lyricTime: lineTime };
                       scrollToProgress(lineTime);
                     }
                     if (lineTime >= 0 && playerRef.current?.seekTo) {
@@ -741,6 +749,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     if (!isPlaying && karaokeEnabled && playerReady && playerRef.current?.getCurrentTime) {
       const videoTime = playerRef.current.getCurrentTime() + syncOffset;
       const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
+      videoAnchorRef.current = {
+        videoTime: clampedTime,
+        lyricTime: currentTimeRef.current || clampedTime
+      };
       currentTimeRef.current = currentTimeRef.current || clampedTime;
       setCurrentTime(currentTimeRef.current);
       const timings = getLineTimings();
@@ -758,6 +770,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       const startTime = firstLine >= 0 ? timings[firstLine] : 0;
       currentTimeRef.current = startTime;
       setCurrentTime(startTime);
+      videoAnchorRef.current = { videoTime: startTime, lyricTime: startTime };
       activeLineIndexRef.current = firstLine >= 0 ? firstLine : 0;
       setActiveLineIndex(firstLine >= 0 ? firstLine : 0);
       if (firstLine >= 0) scrollToLine(firstLine);
@@ -953,12 +966,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              
              {/* Playback Speed Control */}
              <div className="flex items-center gap-1 md:gap-2 px-1.5 md:px-4 border-r border-white/[0.06] pr-2 md:pr-6">
-                 <button onClick={() => updatePlaybackSpeed(-0.1)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
+                 <button onClick={() => updatePlaybackSpeed(-0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
                  <div className="flex flex-col items-center w-12 md:w-16">
-                    <span className="text-lg md:text-2xl font-bold text-blue-400">{playbackSpeed.toFixed(1)}x</span>
+                    <span className="text-lg md:text-2xl font-bold text-blue-400">{playbackSpeed.toFixed(2).replace(/0$/, '')}x</span>
                     <span className="text-[8px] text-gray-400 uppercase tracking-widest font-bold">Speed</span>
                  </div>
-                 <button onClick={() => updatePlaybackSpeed(0.1)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Plus className="w-4 h-4"/></button>
+                 <button onClick={() => updatePlaybackSpeed(0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Plus className="w-4 h-4"/></button>
              </div>
              
              <button onClick={handlePlayPause} className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-2xl transition-all transform active:scale-90 border-2 ${
