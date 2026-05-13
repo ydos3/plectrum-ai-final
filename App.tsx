@@ -29,7 +29,7 @@ const QUOTES = [
     "Your fingers remember what your mind forgets."
 ];
 
-const APP_STATE_KEY = 'plectrum_app_state_v1';
+const APP_STATE_KEY = 'plectrum_app_state_v2';
 
 type PersistedAppState = {
     currentView?: ViewState;
