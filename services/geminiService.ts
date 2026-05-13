@@ -322,8 +322,42 @@ const parseGeminiJson = (value: string) => {
     if (start >= 0 && end > start) {
       return JSON.parse(cleanText.slice(start, end + 1));
     }
+    const arrayStart = cleanText.indexOf('[');
+    const arrayEnd = cleanText.lastIndexOf(']');
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      return JSON.parse(cleanText.slice(arrayStart, arrayEnd + 1));
+    }
     throw new Error('Gemini returned text that was not valid JSON.');
   }
+};
+
+const tryParseGeminiJson = (value: string) => {
+  try {
+    return parseGeminiJson(value);
+  } catch {
+    return null;
+  }
+};
+
+const stripQuoted = (value: string) => value.replace(/^["'`]+|["'`]+$/g, '').trim();
+
+const parseLooseIdentityText = (query: string, value: string): SongIdentityResolution => {
+  const cleanText = cleanJsonText(value).replace(/\*\*/g, '').trim();
+  const titleMatch = cleanText.match(/(?:title|song)\s*[:\-]\s*([^\n,]+)/i);
+  const artistMatch = cleanText.match(/(?:artist|singer|by)\s*[:\-]\s*([^\n,]+)/i) ||
+    cleanText.match(/\bby\s+([^\n.]+)/i);
+  const foundText = /\b(found|identified|likely|probably|song is)\b/i.test(cleanText);
+
+  return {
+    status: titleMatch || artistMatch || foundText ? 'FOUND' : 'AMBIGUOUS',
+    title: stripQuoted(titleMatch?.[1] || query),
+    artist: stripQuoted(artistMatch?.[1] || 'Unknown'),
+    confidence: titleMatch || artistMatch ? 0.73 : 0.5,
+    searchQuery: titleMatch || artistMatch
+      ? `${stripQuoted(titleMatch?.[1] || query)} ${stripQuoted(artistMatch?.[1] || '')}`.trim()
+      : query,
+    reason: 'Gemini returned non-JSON identity text, so Plectrum used a safe loose parse instead of failing.'
+  };
 };
 
 const normalizeContentField = (data: any) => {
@@ -478,7 +512,7 @@ Return strict JSON only:
   }, 2, 800);
 
   if (!responseText) return null;
-  const parsed = parseGeminiJson(responseText);
+  const parsed = tryParseGeminiJson(responseText) || parseLooseIdentityText(query, responseText);
   return Array.isArray(parsed) ? parsed[0] : parsed;
 };
 
@@ -489,7 +523,17 @@ const findVerifiedLyrics = async (query: string, language: AppLanguage) => {
     return { dbResult: directDbResult, identity: null as SongIdentityResolution | null };
   }
 
-  const identity = await identifySongFromQuery(lookupQuery, language);
+  let identity: SongIdentityResolution | null = null;
+  try {
+    identity = await identifySongFromQuery(lookupQuery, language);
+  } catch (error) {
+    console.warn('[SongGen] Identity resolution failed safely', error);
+    identity = {
+      status: 'AMBIGUOUS',
+      confidence: 0,
+      reason: 'Identity lookup returned an unusable response.'
+    };
+  }
   if (!hasHighConfidenceIdentity(identity)) {
     return { dbResult: null, identity };
   }
@@ -537,6 +581,45 @@ const buildUserProvidedLyricsArrangement = (
       ? 'Used user-provided lyrics directly, so Gemini did not need to reproduce copyrighted text.'
       : `Used local ${language} phonetic transcription from user-provided lyrics, so Gemini did not need to reproduce copyrighted text.`
   );
+};
+
+const buildRecoverableSongWorkspace = (
+  query: string,
+  language: AppLanguage,
+  practiceSkill: SkillLevel,
+  reason: string,
+  identity?: SongIdentityResolution | null
+) => {
+  const displayTitle = identity?.title && identity.title !== query ? identity.title : query.trim();
+  const displayArtist = identity?.artist && identity.artist !== 'Unknown' ? identity.artist : 'Unknown';
+  const body = [
+    '### [Lyrics Needed]',
+    `[G]${transliterateLyricsForLanguage(`Search: ${displayTitle}`, language)}`,
+    `[C]${transliterateLyricsForLanguage(displayArtist !== 'Unknown' ? `Artist: ${displayArtist}` : 'Paste verified lyrics here to generate chords instantly.', language)}`,
+    `[D]${transliterateLyricsForLanguage('Plectrum kept the workspace open instead of failing.', language)}`
+  ].join('\n');
+
+  return {
+    title: displayTitle || 'Untitled Song',
+    artist: displayArtist,
+    key: 'G Major',
+    recommendedKey: 'G Major',
+    capo: 0,
+    strummingPattern: practiceSkill === 'Beginner' ? 'D-DU-UDU' : 'D-D-U-U-D-U',
+    difficulty: practiceSkill,
+    skillLevel: practiceSkill,
+    practiceTips: [
+      'Paste lyrics into this editor to generate a chorded version without asking AI to reproduce lyrics.',
+      'Try adding the artist name if the title is shared by multiple songs.'
+    ],
+    chordSimplifications: [],
+    karaokeUrl: '',
+    language,
+    languageFallbackReason: reason,
+    duration: 0,
+    source: 'recoverable-search',
+    content: body
+  };
 };
 
 export const generateSongFromTitle = async (query: string, language: AppLanguage = 'English', skillLevel: SkillLevel = 'Intermediate'): Promise<any> => {
@@ -724,7 +807,15 @@ ${dbResult.plainLyrics}`;
 
   if (!mashupMode && !hasHighConfidenceIdentity(verifiedIdentity)) {
     const reason = verifiedIdentity?.reason ? ` ${verifiedIdentity.reason}` : '';
-    throw new Error(`I could not confidently identify that exact song.${reason} Try "song title by artist", or paste a cleaner lyric line.`);
+    const arrangement = buildRecoverableSongWorkspace(
+      query,
+      language,
+      practiceSkill,
+      `I could not confidently identify that exact song.${reason} No crash: paste lyrics or add artist name and Plectrum will generate chords from there.`,
+      verifiedIdentity
+    );
+    await saveArrangementToCache(queryCacheKey, arrangement);
+    return arrangement;
   }
 
   if (!mashupMode && verifiedIdentity?.title && verifiedIdentity.artist) {
@@ -854,7 +945,13 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
     return parsed;
   } catch (error) {
     console.error("Song Generation Error:", error);
-    throw error;
+    return buildRecoverableSongWorkspace(
+      query,
+      language,
+      practiceSkill,
+      `Generation hit a model formatting issue, so Plectrum opened a safe workspace instead of failing. ${error instanceof Error ? error.message : String(error)}`,
+      verifiedIdentity
+    );
   }
 };
 
