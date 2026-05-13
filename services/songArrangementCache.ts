@@ -1,7 +1,7 @@
 import { AppLanguage, SkillLevel } from '../types';
 import { normalizeSongSearchText } from './songDatabaseService';
 
-const CACHE_KEY = 'plectrum_song_arrangement_cache_v1';
+const CACHE_KEY = 'plectrum_song_arrangement_cache_v2'; // Bumped to v2 to invalidate local browser caching of bad tracks
 const MAX_CACHE_ITEMS = 75;
 
 type CacheEnvelope = {

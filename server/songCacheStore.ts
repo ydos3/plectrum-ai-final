@@ -4,8 +4,8 @@ import { normalizeSongSearchText } from '../services/songDatabaseService';
 
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
-const CACHE_PREFIX = 'plectrum:song:';
-const LOCAL_STORE_PATH = path.resolve(process.cwd(), 'data', 'song-library.json');
+const CACHE_PREFIX = 'plectrum:song:v2:'; // Bumped version to flush old bad caches
+const LOCAL_STORE_PATH = path.resolve(process.cwd(), 'data', 'song-library-v2.json');
 
 type SongCacheRecord = {
   key: string;
