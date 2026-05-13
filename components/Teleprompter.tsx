@@ -35,6 +35,58 @@ const clampNumber = (value: unknown, fallback: number, min: number, max: number)
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
 };
 
+const parseDurationSeconds = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return seconds > 0 ? seconds : null;
+  }
+
+  const parts = trimmed.split(':').map(part => Number(part));
+  if (
+    parts.length < 2 ||
+    parts.length > 3 ||
+    parts.some(part => !Number.isFinite(part) || part < 0)
+  ) {
+    return null;
+  }
+
+  const seconds = parts.reduce((total, part) => (total * 60) + part, 0);
+  return seconds > 0 ? seconds : null;
+};
+
+const getSongMetadataDuration = (song: Song): number | null => {
+  const data = song as any;
+  return [
+    data.duration,
+    data.durationSeconds,
+    data.songDuration,
+    data.videoDuration,
+    data.metadata?.duration,
+    data.metadata?.durationSeconds,
+    data.extractedMetadata?.duration,
+    data.extractedMetadata?.durationSeconds
+  ].map(parseDurationSeconds).find((duration): duration is number => !!duration) || null;
+};
+
+const estimateDurationFromLyrics = (content: string) => {
+  const lyricLines = content
+    .split(/\r?\n/)
+    .map(line => line.replace(/\[.*?\]/g, '').replace(/^#+\s*/, '').trim())
+    .filter(Boolean);
+  const wordCount = lyricLines.join(' ').split(/\s+/).filter(Boolean).length;
+  return Math.max(240, lyricLines.length * 5.5, wordCount * 0.75);
+};
+
+const getInitialDuration = (song: Song) => (
+  getSongMetadataDuration(song) || estimateDurationFromLyrics(song.content || '')
+);
+
 const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const persistedState = useRef<PersistedTeleprompterState>(readTeleprompterState());
   const [karaokeEnabled, setKaraokeEnabled] = useState(() => Boolean(persistedState.current.karaokeEnabled));
@@ -55,7 +107,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   // KARAOKE/YOUTUBE STATE
   const [currentTime, setCurrentTime] = useState(0);
-  const [actualDuration, setActualDuration] = useState(song.duration || 180);
+  const [actualDuration, setActualDuration] = useState(() => getInitialDuration(song));
   const [videoUrl, setVideoUrl] = useState(song.karaokeUrl || '');
   const [searchQuery, setSearchQuery] = useState(`${song.title} ${song.artist} karaoke`);
   const [videoError, setVideoError] = useState(false);
@@ -71,10 +123,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   
   const playerRef = useRef<any>(null);
   const intervalRef = useRef<number | null>(null);
+  const youtubeHostRef = useRef<HTMLDivElement | null>(null);
   const activeVideoId = (fallbackLevel === 2 && !isMashupMode)
     ? extractYouTubeVideoId(videoUrl)
     : dynamicVideoId;
-  const videoMountKey = `${iframeKey}-${activeVideoId || 'empty'}`;
 
   useEffect(() => {
     localStorage.setItem(TELEPROMPTER_STATE_KEY, JSON.stringify({
@@ -193,15 +245,17 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
     // Uniform distribution with section pauses
     const duration = actualDuration;
-    const introTime = Math.min(duration * 0.08, 15);
-    const effectiveDuration = Math.max(10, duration - introTime - 10); // Leave 10s outro
+    const introTime = Math.min(duration * 0.04, 8);
+    const outroTime = Math.min(duration * 0.03, 6);
+    const sectionCount = lines.filter(line => line.type === 'header').length;
+    const effectiveDuration = Math.max(10, duration - introTime - outroTime);
     
     let currentTime = introTime;
-    const baseDuration = effectiveDuration / totalLyricLines;
+    const baseDuration = effectiveDuration / (totalLyricLines + (sectionCount * 0.5));
 
     return lines.map(line => {
       if (line.type === 'header') {
-        currentTime += baseDuration * 1.5; // Extra pause at section headers
+        currentTime += baseDuration * 0.5;
         return -1; // Headers don't get timestamps
       }
       if (line.type === 'empty') return -1;
@@ -210,7 +264,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       currentTime += baseDuration;
       return t;
     });
-  }, [actualDuration, syncOffset, hasTimedLyrics, timedLyrics]);
+  }, [actualDuration, hasTimedLyrics, timedLyrics]);
 
   const getCenteredScrollTop = useCallback((index: number) => {
     const el = lineRefs.current[index];
@@ -235,44 +289,17 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     }
   }, [getCenteredScrollTop]);
 
-  const scrollToTime = useCallback((time: number, timings: number[]) => {
-    if (!scrollContainerRef.current) return;
+  const scrollToProgress = useCallback((time: number) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
     if (Date.now() < manualScrollHoldUntilRef.current) return;
 
-    let currentIdx = -1;
-    let nextIdx = -1;
-    for (let i = 0; i < timings.length; i++) {
-      if (timings[i] < 0) continue;
-      if (timings[i] <= time) currentIdx = i;
-      if (timings[i] > time) {
-        nextIdx = i;
-        break;
-      }
-    }
+    const scrollableDistance = Math.max(0, container.scrollHeight - container.clientHeight);
+    if (scrollableDistance <= 0) return;
 
-    if (currentIdx < 0) {
-      const firstIdx = timings.findIndex(t => t >= 0);
-      if (firstIdx >= 0) scrollToLine(firstIdx, 'auto');
-      return;
-    }
-
-    const currentTarget = getCenteredScrollTop(currentIdx);
-    if (currentTarget === null) return;
-
-    const nextTarget = nextIdx >= 0 ? getCenteredScrollTop(nextIdx) : currentTarget;
-    const currentTime = timings[currentIdx];
-    const nextTime = nextIdx >= 0 ? timings[nextIdx] : currentTime + 4;
-    const progress = nextTime > currentTime
-      ? Math.min(1, Math.max(0, (time - currentTime) / (nextTime - currentTime)))
-      : 0;
-
-    const target = currentTarget + ((nextTarget ?? currentTarget) - currentTarget) * progress;
-    const container = scrollContainerRef.current;
-    
-    // Instead of container.scrollTop += (target - container.scrollTop) * 0.18 which can stall on mobile due to rounding,
-    // just directly set it or use a persistent float. Because progress linearly moves target, assigning target is smooth!
-    container.scrollTop = target;
-  }, [getCenteredScrollTop, scrollToLine]);
+    const progress = Math.min(1, Math.max(0, time / Math.max(1, actualDuration)));
+    container.scrollTop = scrollableDistance * progress;
+  }, [actualDuration]);
 
   const getActiveLineForTime = useCallback((time: number, timings: number[]) => {
     let activeIdx = -1;
@@ -299,24 +326,24 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       const deltaTime = Math.min(Math.max(0, (frameTime - lastFrameTime) / 1000), 0.1);
       lastFrameTime = frameTime;
 
-      const videoTime = karaokeEnabled && playerReady && playerRef.current?.getCurrentTime
+      const rawVideoTime = karaokeEnabled && playerReady && playerRef.current?.getCurrentTime
         ? playerRef.current.getCurrentTime() + syncOffset
         : null;
-      const nextTime = typeof videoTime === 'number' && Number.isFinite(videoTime)
-        ? videoTime
+      const nextTime = typeof rawVideoTime === 'number' && Number.isFinite(rawVideoTime)
+        ? rawVideoTime
         : currentTimeRef.current + (deltaTime * playbackSpeed);
-      currentTimeRef.current = nextTime;
-      setCurrentTime(nextTime);
+      const clampedTime = Math.min(actualDuration, Math.max(0, nextTime));
+      currentTimeRef.current = clampedTime;
+      setCurrentTime(clampedTime);
 
-      const newActiveIdx = getActiveLineForTime(nextTime, timings);
+      const newActiveIdx = getActiveLineForTime(clampedTime, timings);
       if (newActiveIdx >= 0 && newActiveIdx !== activeLineIndexRef.current) {
         activeLineIndexRef.current = newActiveIdx;
         setActiveLineIndex(newActiveIdx);
       }
-      scrollToTime(nextTime, timings);
+      scrollToProgress(clampedTime);
 
-      const lastTimedLine = [...timings].reverse().find(t => t >= 0) ?? actualDuration;
-      if (nextTime <= lastTimedLine + 8) {
+      if (clampedTime < actualDuration) {
         scrollTimerRef.current = requestAnimationFrame(scrollLoop);
       } else {
         setIsPlaying(false);
@@ -328,7 +355,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
     };
-  }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, syncOffset, getLineTimings, getActiveLineForTime, scrollToTime]);
+  }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, syncOffset, getLineTimings, getActiveLineForTime, scrollToProgress]);
 
   // Keep the lyric clock aligned to YouTube while paused. During karaoke playback, the main loop follows YouTube time.
   useEffect(() => {
@@ -339,22 +366,31 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     const syncInterval = window.setInterval(() => {
       if (playerRef.current?.getCurrentTime) {
         const videoTime = playerRef.current.getCurrentTime() + syncOffset;
-        currentTimeRef.current = videoTime;
-        setCurrentTime(videoTime);
+        const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
+        currentTimeRef.current = clampedTime;
+        setCurrentTime(clampedTime);
         
-        const newActiveIdx = getActiveLineForTime(videoTime, timings);
+        const newActiveIdx = getActiveLineForTime(clampedTime, timings);
 
         if (newActiveIdx !== activeLineIndexRef.current && newActiveIdx >= 0) {
           activeLineIndexRef.current = newActiveIdx;
           setActiveLineIndex(newActiveIdx);
         }
+        scrollToProgress(clampedTime);
       }
     }, 80);
 
     return () => clearInterval(syncInterval);
-  }, [karaokeEnabled, playerReady, isPlaying, syncOffset, getLineTimings, getActiveLineForTime]);
+  }, [karaokeEnabled, playerReady, isPlaying, syncOffset, actualDuration, getLineTimings, getActiveLineForTime, scrollToProgress]);
 
-  // Removed YouTube playback speed link to teleprompter speed
+  useEffect(() => {
+    if (!karaokeEnabled || !playerReady || !playerRef.current?.setPlaybackRate) return;
+    try {
+      playerRef.current.setPlaybackRate(playbackSpeed);
+    } catch (error) {
+      console.warn('Could not update YouTube playback speed', error);
+    }
+  }, [karaokeEnabled, playerReady, playbackSpeed]);
 
   // ─── YouTube Setup ─────────────────────────────────────────────────
 
@@ -363,7 +399,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     const titleLower = song.title.toLowerCase();
     const detectedMashup = titleLower.includes('mashup') || titleLower.includes('medley') || titleLower.includes(' vs ');
     setIsMashupMode(detectedMashup);
-    setActualDuration(song.duration || 180);
+    setActualDuration(getInitialDuration(song));
+    currentTimeRef.current = 0;
     
     const initialQuery = detectedMashup 
         ? `${song.title} mashup` 
@@ -454,15 +491,24 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         if (intervalRef.current) clearInterval(intervalRef.current);
         if (playerRef.current?.destroy) {
             try { playerRef.current.destroy(); } catch(e) {}
+            playerRef.current = null;
         }
+        if (youtubeHostRef.current) youtubeHostRef.current.innerHTML = '';
     };
   }, [karaokeEnabled, iframeKey, dynamicVideoId, fallbackLevel, videoUrl, isMashupMode]);
 
   const loadPlayer = () => {
-      if (!document.getElementById('youtube-target')) return;
+      const host = youtubeHostRef.current;
+      if (!host) return;
       if (playerRef.current) {
           try { playerRef.current.destroy(); } catch(e) {}
+          playerRef.current = null;
       }
+      host.innerHTML = '';
+      const target = document.createElement('div');
+      target.className = 'w-full h-full';
+      host.appendChild(target);
+
       const metadataId = extractYouTubeVideoId(videoUrl);
       
       const playerConfig: any = {
@@ -477,7 +523,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                   setPlayerReady(true);
                   if (event.target.getDuration) {
                       const d = event.target.getDuration();
-                      if (d > 0) setActualDuration(d);
+                      if (d > 0 && !getSongMetadataDuration(song)) setActualDuration(d);
                   }
                   event.target.playVideo();
               },
@@ -487,10 +533,16 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                        setPlayerReady(true);
                        setVideoError(false);
                        const videoTime = event.target?.getCurrentTime ? event.target.getCurrentTime() + syncOffset : currentTimeRef.current;
-                       currentTimeRef.current = videoTime;
-                       setCurrentTime(videoTime);
+                       const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
+                       currentTimeRef.current = currentTimeRef.current || clampedTime;
+                       setCurrentTime(currentTimeRef.current);
                        setIsPlaying(true);
                   } else if (event.data === 2 || event.data === 0) {
+                       if (event.data === 0) {
+                         currentTimeRef.current = actualDuration;
+                         setCurrentTime(actualDuration);
+                         scrollToProgress(actualDuration);
+                       }
                        setIsPlaying(false);
                   }
               }
@@ -504,11 +556,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
       try {
         if ((window as any).YT?.Player) {
-            playerRef.current = new (window as any).YT.Player('youtube-target', playerConfig);
+            playerRef.current = new (window as any).YT.Player(target, playerConfig);
         } else {
             setTimeout(() => {
-                 if ((window as any).YT?.Player) {
-                     playerRef.current = new (window as any).YT.Player('youtube-target', playerConfig);
+                 if ((window as any).YT?.Player && youtubeHostRef.current?.contains(target)) {
+                     playerRef.current = new (window as any).YT.Player(target, playerConfig);
                  }
             }, 500);
         }
@@ -623,15 +675,19 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                   const lineTime = timings[idx];
                   if (karaokeEnabled) {
                     setActiveLineIndex(idx);
+                    if (lineTime >= 0) {
+                      currentTimeRef.current = lineTime;
+                      setCurrentTime(lineTime);
+                      scrollToProgress(lineTime);
+                    }
                     if (lineTime >= 0 && playerRef.current?.seekTo) {
                       playerRef.current.seekTo(Math.max(0, lineTime - syncOffset), true);
                     }
-                    scrollToLine(idx);
                   } else if (lineTime >= 0) {
                     currentTimeRef.current = lineTime;
                     setCurrentTime(lineTime);
                     setActiveLineIndex(idx);
-                    scrollToLine(idx);
+                    scrollToProgress(lineTime);
                   }
                 }}
               >
@@ -684,10 +740,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     let startedFromVideo = false;
     if (!isPlaying && karaokeEnabled && playerReady && playerRef.current?.getCurrentTime) {
       const videoTime = playerRef.current.getCurrentTime() + syncOffset;
-      currentTimeRef.current = videoTime;
-      setCurrentTime(videoTime);
+      const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
+      currentTimeRef.current = currentTimeRef.current || clampedTime;
+      setCurrentTime(currentTimeRef.current);
       const timings = getLineTimings();
-      const syncedLine = getActiveLineForTime(videoTime, timings);
+      const syncedLine = getActiveLineForTime(currentTimeRef.current, timings);
       if (syncedLine >= 0) {
         activeLineIndexRef.current = syncedLine;
         setActiveLineIndex(syncedLine);
@@ -819,7 +876,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
                  <div className="aspect-video bg-black w-full border-b border-white/[0.05] relative group shrink-0">
                      <div id="player-wrapper" className={`w-full h-full absolute inset-0 ${videoError ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-                        <div key={videoMountKey} id="youtube-target" className="w-full h-full"></div>
+                        <div ref={youtubeHostRef} className="w-full h-full"></div>
                      </div>
                      {(!playerReady && !videoError) || isFetchingId ? (
                          <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-10 flex-col pointer-events-none">
