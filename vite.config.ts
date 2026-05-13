@@ -2,6 +2,7 @@ import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { handleGeminiProxyRequest } from './server/geminiProxy';
+import { handleSongCacheRequest } from './server/songCacheStore';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
@@ -38,6 +39,32 @@ export default defineConfig(({ mode }) => {
                 res.statusCode = 400;
                 res.setHeader('Content-Type', 'application/json');
                 res.end(JSON.stringify({ error: 'Invalid Gemini request.' }));
+              }
+            });
+            server.middlewares.use('/api/song-cache', async (req, res) => {
+              try {
+                let payload: any = {};
+
+                if (req.method === 'GET') {
+                  const url = new URL(req.url || '', 'http://localhost');
+                  payload = Object.fromEntries(url.searchParams.entries());
+                } else {
+                  const chunks: Buffer[] = [];
+                  for await (const chunk of req) {
+                    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                  }
+                  payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+                }
+
+                const result = await handleSongCacheRequest(payload, req.method || 'GET');
+                res.statusCode = result.status;
+                if (result.status === 405) res.setHeader('Allow', 'GET, POST');
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify(result.body));
+              } catch (error: any) {
+                res.statusCode = 500;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: error.message || 'Song cache failed.' }));
               }
             });
           }

@@ -2,7 +2,7 @@
 import { AppLanguage, SkillLevel } from "../types";
 import { searchLRCLIB, searchSongDatabase, normalizeSongSearchText } from "./songDatabaseService";
 import { transliterateLyricsForLanguage } from "./indicTransliterationService";
-import { getArrangementCacheKey, getCachedArrangement, saveArrangementToCache } from "./songArrangementCache";
+import { getArrangementCacheKey, getCachedArrangement, saveArrangementToCache, searchCachedArrangement } from "./songArrangementCache";
 
 // ─── Model Configuration ──────────────────────────────────────────────
 // Pro handles high-value generation and vision. Flash handles lightweight UX paths.
@@ -544,6 +544,8 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
   const queryCacheKey = getArrangementCacheKey(query, language, practiceSkill);
   const cached = await getCachedArrangement(queryCacheKey);
   if (cached) return cached;
+  const sharedLibraryHit = await searchCachedArrangement(query, language, practiceSkill);
+  if (sharedLibraryHit) return sharedLibraryHit;
 
   if (isLikelyUserProvidedLyrics(query)) {
     const arrangement = buildUserProvidedLyricsArrangement(query, language, practiceSkill);

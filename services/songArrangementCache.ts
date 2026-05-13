@@ -55,6 +55,31 @@ export const getCachedArrangement = async (key: string) => {
   return null;
 };
 
+export const searchCachedArrangement = async (
+  query: string,
+  language: AppLanguage,
+  skillLevel: SkillLevel
+) => {
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      language,
+      skillLevel: normalizeSkill(skillLevel)
+    });
+    const response = await fetch(`/api/song-cache?${params.toString()}`);
+    if (!response.ok) return null;
+    const remote = await response.json();
+    if (remote?.data) {
+      saveArrangementToLocalCache(getArrangementCacheKey(query, language, skillLevel, remote.data.title, remote.data.artist), remote.data);
+      return { ...remote.data, source: remote.data.source || 'shared-library' };
+    }
+  } catch {
+    // Local dev may not have the backend running yet.
+  }
+
+  return null;
+};
+
 export const saveArrangementToLocalCache = (key: string, data: any) => {
   const cache = readLocalCache();
   cache[key] = { savedAt: Date.now(), data };

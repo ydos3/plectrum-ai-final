@@ -65,6 +65,110 @@ const SCRIPT_MAPS: Partial<Record<AppLanguage, Record<string, string>>> = {
 
 const DIGRAPHS = ['kh', 'gh', 'ch', 'jh', 'th', 'dh', 'ph', 'bh', 'sh', 'aa', 'ee', 'oo', 'ai', 'au'];
 
+type ScriptRule = {
+  consonants: Record<string, string>;
+  independentVowels: Record<string, string>;
+  vowelSigns: Record<string, string>;
+  virama: string;
+};
+
+const CONSONANT_BASE = {
+  b: 0, bh: 1, c: 2, ch: 3, d: 4, dh: 5, f: 6, g: 7, gh: 8, h: 9,
+  j: 10, jh: 11, k: 12, kh: 13, l: 14, m: 15, n: 16, p: 17, ph: 18,
+  q: 19, r: 20, s: 21, sh: 22, t: 23, th: 24, v: 25, w: 26, y: 27, z: 28
+} as const;
+
+const makeConsonants = (values: string[]) => (
+  Object.fromEntries(Object.entries(CONSONANT_BASE).map(([key, index]) => [key, values[index]]))
+);
+
+const SCRIPT_RULES: Partial<Record<AppLanguage, ScriptRule>> = {
+  Hindi: {
+    consonants: makeConsonants(['ब', 'भ', 'क', 'च', 'द', 'ध', 'फ', 'ग', 'घ', 'ह', 'ज', 'झ', 'क', 'ख', 'ल', 'म', 'न', 'प', 'फ', 'क', 'र', 'स', 'श', 'त', 'थ', 'व', 'व', 'य', 'ज']),
+    independentVowels: { a: 'अ', aa: 'आ', i: 'इ', ee: 'ई', u: 'उ', oo: 'ऊ', e: 'ए', ai: 'ऐ', o: 'ओ', au: 'औ' },
+    vowelSigns: { a: '', aa: 'ा', i: 'ि', ee: 'ी', u: 'ु', oo: 'ू', e: 'े', ai: 'ै', o: 'ो', au: 'ौ' },
+    virama: '्'
+  },
+  Gujarati: {
+    consonants: makeConsonants(['બ', 'ભ', 'ક', 'ચ', 'દ', 'ધ', 'ફ', 'ગ', 'ઘ', 'હ', 'જ', 'ઝ', 'ક', 'ખ', 'લ', 'મ', 'ન', 'પ', 'ફ', 'ક', 'ર', 'સ', 'શ', 'ત', 'થ', 'વ', 'વ', 'ય', 'ઝ']),
+    independentVowels: { a: 'અ', aa: 'આ', i: 'ઇ', ee: 'ઈ', u: 'ઉ', oo: 'ઊ', e: 'એ', ai: 'ઐ', o: 'ઓ', au: 'ઔ' },
+    vowelSigns: { a: '', aa: 'ા', i: 'િ', ee: 'ી', u: 'ુ', oo: 'ૂ', e: 'ે', ai: 'ૈ', o: 'ો', au: 'ૌ' },
+    virama: '્'
+  },
+  Punjabi: {
+    consonants: makeConsonants(['ਬ', 'ਭ', 'ਕ', 'ਚ', 'ਦ', 'ਧ', 'ਫ', 'ਗ', 'ਘ', 'ਹ', 'ਜ', 'ਝ', 'ਕ', 'ਖ', 'ਲ', 'ਮ', 'ਨ', 'ਪ', 'ਫ', 'ਕ', 'ਰ', 'ਸ', 'ਸ਼', 'ਤ', 'ਥ', 'ਵ', 'ਵ', 'ਯ', 'ਜ਼']),
+    independentVowels: { a: 'ਅ', aa: 'ਆ', i: 'ਇ', ee: 'ਈ', u: 'ਉ', oo: 'ਊ', e: 'ਏ', ai: 'ਐ', o: 'ਓ', au: 'ਔ' },
+    vowelSigns: { a: '', aa: 'ਾ', i: 'ਿ', ee: 'ੀ', u: 'ੁ', oo: 'ੂ', e: 'ੇ', ai: 'ੈ', o: 'ੋ', au: 'ੌ' },
+    virama: '੍'
+  },
+  Bengali: {
+    consonants: makeConsonants(['ব', 'ভ', 'ক', 'চ', 'দ', 'ধ', 'ফ', 'গ', 'ঘ', 'হ', 'জ', 'ঝ', 'ক', 'খ', 'ল', 'ম', 'ন', 'প', 'ফ', 'ক', 'র', 'স', 'শ', 'ত', 'থ', 'ভ', 'ও', 'য', 'জ']),
+    independentVowels: { a: 'অ', aa: 'আ', i: 'ই', ee: 'ঈ', u: 'উ', oo: 'ঊ', e: 'এ', ai: 'ঐ', o: 'ও', au: 'ঔ' },
+    vowelSigns: { a: '', aa: 'া', i: 'ি', ee: 'ী', u: 'ু', oo: 'ূ', e: 'ে', ai: 'ৈ', o: 'ো', au: 'ৌ' },
+    virama: '্'
+  },
+  Telugu: {
+    consonants: makeConsonants(['బ', 'భ', 'క', 'చ', 'ద', 'ధ', 'ఫ', 'గ', 'ఘ', 'హ', 'జ', 'ఝ', 'క', 'ఖ', 'ల', 'మ', 'న', 'ప', 'ఫ', 'క', 'ర', 'స', 'శ', 'త', 'థ', 'వ', 'వ', 'య', 'జ']),
+    independentVowels: { a: 'అ', aa: 'ఆ', i: 'ఇ', ee: 'ఈ', u: 'ఉ', oo: 'ఊ', e: 'ఎ', ai: 'ఐ', o: 'ఒ', au: 'ఔ' },
+    vowelSigns: { a: '', aa: 'ా', i: 'ి', ee: 'ీ', u: 'ు', oo: 'ూ', e: 'ె', ai: 'ై', o: 'ొ', au: 'ౌ' },
+    virama: '్'
+  },
+  Kannada: {
+    consonants: makeConsonants(['ಬ', 'ಭ', 'ಕ', 'ಚ', 'ದ', 'ಧ', 'ಫ', 'ಗ', 'ಘ', 'ಹ', 'ಜ', 'ಝ', 'ಕ', 'ಖ', 'ಲ', 'ಮ', 'ನ', 'ಪ', 'ಫ', 'ಕ', 'ರ', 'ಸ', 'ಶ', 'ತ', 'ಥ', 'ವ', 'ವ', 'ಯ', 'ಜ']),
+    independentVowels: { a: 'ಅ', aa: 'ಆ', i: 'ಇ', ee: 'ಈ', u: 'ಉ', oo: 'ಊ', e: 'ಎ', ai: 'ಐ', o: 'ಒ', au: 'ಔ' },
+    vowelSigns: { a: '', aa: 'ಾ', i: 'ಿ', ee: 'ೀ', u: 'ು', oo: 'ೂ', e: 'ೆ', ai: 'ೈ', o: 'ೊ', au: 'ೌ' },
+    virama: '್'
+  }
+};
+
+const VOWELS = new Set(['a', 'aa', 'i', 'ee', 'u', 'oo', 'e', 'ai', 'o', 'au']);
+const TOKEN_ORDER = ['kh', 'gh', 'ch', 'jh', 'th', 'dh', 'ph', 'bh', 'sh', 'aa', 'ee', 'oo', 'ai', 'au'];
+
+const tokenizeRomanWord = (word: string) => {
+  const tokens: string[] = [];
+  let i = 0;
+  const lower = word.toLowerCase().replace(/[^a-z]/g, '');
+
+  while (i < lower.length) {
+    const token = TOKEN_ORDER.find(candidate => lower.startsWith(candidate, i));
+    if (token) {
+      tokens.push(token);
+      i += token.length;
+    } else {
+      tokens.push(lower[i]);
+      i += 1;
+    }
+  }
+
+  return tokens;
+};
+
+const transliterateWithRule = (word: string, rule: ScriptRule) => {
+  const tokens = tokenizeRomanWord(word);
+  let output = '';
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (rule.consonants[token]) {
+      const next = tokens[i + 1];
+      if (next && VOWELS.has(next)) {
+        output += rule.consonants[token] + rule.vowelSigns[next];
+        i += 1;
+      } else if (next && rule.consonants[next]) {
+        output += rule.consonants[token] + rule.virama;
+      } else {
+        output += rule.consonants[token];
+      }
+    } else if (VOWELS.has(token)) {
+      output += rule.independentVowels[token];
+    } else {
+      output += token;
+    }
+  }
+
+  return output || word;
+};
+
 const transliterateWord = (word: string, map: Record<string, string>) => {
   let result = '';
   let i = 0;
@@ -87,6 +191,14 @@ const transliterateWord = (word: string, map: Record<string, string>) => {
 
 export const transliterateLyricsForLanguage = (text: string, language: AppLanguage) => {
   if (language === 'English') return text;
+  const rule = SCRIPT_RULES[language];
+  if (rule) {
+    return text.replace(/(\[[^\]]+\])|([A-Za-z']+)/g, (match, chord, word) => {
+      if (chord) return chord;
+      return transliterateWithRule(word, rule);
+    });
+  }
+
   const map = SCRIPT_MAPS[language] || SCRIPT_MAPS.Hindi;
   if (!map) return text;
 
