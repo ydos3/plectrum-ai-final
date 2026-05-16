@@ -1,5 +1,14 @@
 const YOUTUBE_ID_PATTERN = /^[a-zA-Z0-9_-]{11}$/;
 
+export type YouTubeSourceType = 'Original' | 'Official Audio' | 'Lyric Video' | 'Karaoke' | 'Instrumental' | 'Cover' | 'Fallback';
+
+export type YouTubeSource = {
+  id: string;
+  title?: string;
+  channelName?: string;
+  sourceType: YouTubeSourceType;
+};
+
 export const isValidYouTubeVideoId = (id?: string | null) => (
   !!id && YOUTUBE_ID_PATTERN.test(id)
 );
@@ -56,6 +65,11 @@ export const validateYouTubeVideoId = async (id: string) => {
 };
 
 export const searchYouTubeVideoId = async (query: string) => {
+  const source = await searchYouTubeSource(query);
+  return source?.id || null;
+};
+
+export const searchYouTubeSource = async (query: string, sourceType: YouTubeSourceType = 'Fallback'): Promise<YouTubeSource | null> => {
   const cleanQuery = query.trim();
   if (!cleanQuery) return null;
 
@@ -63,7 +77,13 @@ export const searchYouTubeVideoId = async (query: string) => {
     const response = await fetch(`/api/youtube-search?q=${encodeURIComponent(cleanQuery)}`);
     if (!response.ok) return null;
     const data = await response.json();
-    return isValidYouTubeVideoId(data?.id) ? data.id : null;
+    if (!isValidYouTubeVideoId(data?.id)) return null;
+    return {
+      id: data.id,
+      title: typeof data.title === 'string' ? data.title : undefined,
+      channelName: typeof data.channelName === 'string' ? data.channelName : undefined,
+      sourceType: data.sourceType || sourceType
+    };
   } catch {
     return null;
   }

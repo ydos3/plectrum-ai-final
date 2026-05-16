@@ -4,7 +4,7 @@ import { Song, Handedness } from '../types';
 import { Play, Pause, X, Layout, Search, ExternalLink, ArrowRight, AlertCircle, Youtube, Minus, Plus, Loader2, Music, RefreshCw, Mic2, Merge, ArrowLeft, Activity, Timer } from 'lucide-react';
 import { getChordFingering } from '../services/chordService';
 import { getYouTubeVideoId } from '../services/geminiService';
-import { extractYouTubeVideoId, getYouTubeSearchUrl, searchYouTubeVideoId, toYouTubeWatchUrl } from '../services/youtubeService';
+import { extractYouTubeVideoId, getYouTubeSearchUrl, searchYouTubeSource, toYouTubeWatchUrl, YouTubeSource, YouTubeSourceType } from '../services/youtubeService';
 import GuitarFretboard from './GuitarFretboard';
 
 interface TeleprompterProps {
@@ -13,6 +13,26 @@ interface TeleprompterProps {
 }
 
 const TELEPROMPTER_STATE_KEY = 'plectrum_teleprompter_state_v1';
+
+type SourceStep = {
+  level: number;
+  sourceType: YouTubeSourceType;
+  label: string;
+  buildQuery: (song: Song) => string;
+};
+
+const SOURCE_STEPS: SourceStep[] = [
+  { level: 1, sourceType: 'Original', label: 'Original', buildQuery: song => `${song.title} ${song.artist} official video` },
+  { level: 2, sourceType: 'Official Audio', label: 'Official Audio', buildQuery: song => `${song.title} ${song.artist} official audio` },
+  { level: 3, sourceType: 'Lyric Video', label: 'Lyric Video', buildQuery: song => `${song.title} ${song.artist} lyric video` },
+  { level: 4, sourceType: 'Original', label: 'Verified Music', buildQuery: song => `${song.title} ${song.artist} official music` },
+  { level: 5, sourceType: 'Karaoke', label: 'Karaoke', buildQuery: song => `${song.title} ${song.artist} karaoke` },
+  { level: 6, sourceType: 'Instrumental', label: 'Instrumental', buildQuery: song => `${song.title} ${song.artist} instrumental` },
+  { level: 7, sourceType: 'Cover', label: 'Backing Track', buildQuery: song => `${song.title} ${song.artist} backing track` },
+  { level: 8, sourceType: 'Fallback', label: 'Fallback', buildQuery: song => `${song.title} ${song.artist}` }
+];
+
+const DIRECT_SOURCE_LEVEL = 0;
 
 type PersistedTeleprompterState = {
   karaokeEnabled?: boolean;
@@ -120,14 +140,20 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const [fallbackLevel, setFallbackLevel] = useState(1); 
   const [iframeKey, setIframeKey] = useState(0); 
   const [dynamicVideoId, setDynamicVideoId] = useState<string | null>(null);
+  const [activeSource, setActiveSource] = useState<YouTubeSource | null>(null);
   const [isFetchingId, setIsFetchingId] = useState(false);
   
   const playerRef = useRef<any>(null);
   const intervalRef = useRef<number | null>(null);
   const youtubeHostRef = useRef<HTMLDivElement | null>(null);
-  const activeVideoId = (fallbackLevel === 2 && !isMashupMode)
+  const activeVideoId = (fallbackLevel === DIRECT_SOURCE_LEVEL && !isMashupMode)
     ? extractYouTubeVideoId(videoUrl)
     : dynamicVideoId;
+  const activeStep = SOURCE_STEPS.find(step => step.level === fallbackLevel);
+  const sourceLabel = fallbackLevel === DIRECT_SOURCE_LEVEL ? 'Original' : (activeSource?.sourceType || activeStep?.label || 'Fallback');
+  const sourceChannelName = fallbackLevel === DIRECT_SOURCE_LEVEL
+    ? 'Direct YouTube link'
+    : (activeSource?.channelName || 'YouTube');
 
   useEffect(() => {
     localStorage.setItem(TELEPROMPTER_STATE_KEY, JSON.stringify({
@@ -142,10 +168,6 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   useEffect(() => {
     activeLineIndexRef.current = activeLineIndex;
   }, [activeLineIndex]);
-
-  const holdAutoScrollForManualLookahead = useCallback(() => {
-    manualScrollHoldUntilRef.current = Date.now() + 4000;
-  }, []);
 
   // ─── Parse Song Content ────────────────────────────────────────────
 
@@ -313,6 +335,25 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return activeIdx;
   }, []);
 
+  const syncClockToManualScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    manualScrollHoldUntilRef.current = Date.now() + 450;
+    const scrollableDistance = Math.max(1, container.scrollHeight - container.clientHeight);
+    const progress = Math.min(1, Math.max(0, container.scrollTop / scrollableDistance));
+    const nextTime = progress * actualDuration;
+    currentTimeRef.current = nextTime;
+    setCurrentTime(nextTime);
+
+    const timings = getLineTimings();
+    const newActiveIdx = getActiveLineForTime(nextTime, timings);
+    if (newActiveIdx >= 0) {
+      activeLineIndexRef.current = newActiveIdx;
+      setActiveLineIndex(newActiveIdx);
+    }
+  }, [actualDuration, getActiveLineForTime, getLineTimings]);
+
   useEffect(() => {
     if (!isPlaying) {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
@@ -395,9 +436,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     currentTimeRef.current = 0;
     videoAnchorRef.current = { videoTime: 0, lyricTime: 0 };
     
-    const initialQuery = detectedMashup 
-        ? `${song.title} mashup` 
-        : `${song.title} ${song.artist} karaoke`;
+    const initialQuery = detectedMashup
+        ? `${song.title} mashup`
+        : `${song.title} ${song.artist} official video`;
         
     setSearchQuery(initialQuery);
     setVideoError(false);
@@ -405,9 +446,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setPlayerReady(false);
     setIsFetchingId(false);
     setDynamicVideoId(null);
+    setActiveSource(null);
     
     if (song.karaokeUrl && extractYouTubeVideoId(song.karaokeUrl)) {
-        setFallbackLevel(2);
+        setFallbackLevel(DIRECT_SOURCE_LEVEL);
     } else {
         setFallbackLevel(1);
     }
@@ -419,9 +461,14 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     if (!karaokeEnabled) return;
     
     const metadataId = extractYouTubeVideoId(videoUrl);
-    if (fallbackLevel === 2 && metadataId && !isMashupMode) {
+    if (fallbackLevel === DIRECT_SOURCE_LEVEL && metadataId && !isMashupMode) {
        // We have a direct URL, no need to ask Gemini
        setDynamicVideoId(null);
+       setActiveSource({
+         id: metadataId,
+         sourceType: 'Original',
+         channelName: 'Direct YouTube link'
+       });
        setIsFetchingId(false);
        setVideoError(false);
        setVideoErrorMessage('');
@@ -432,31 +479,44 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setIsFetchingId(true);
     setPlayerReady(false);
     
-    let term = "";
-    if (fallbackLevel === 1) term = searchQuery.trim() || (isMashupMode ? `${song.title} mashup` : `${song.title} ${song.artist} karaoke lyric official`);
-    else if (fallbackLevel === 3) term = `${song.title} ${song.artist} official video`;
-    else if (fallbackLevel === 4) term = `${song.title} instrumental backing track`;
-    else term = `${song.title} ${song.artist}`;
+    const step = SOURCE_STEPS.find(item => item.level === fallbackLevel) || SOURCE_STEPS[0];
+    const term = fallbackLevel === 1 && searchQuery.trim()
+      ? searchQuery.trim()
+      : (isMashupMode ? `${song.title} ${song.artist} official mashup` : step.buildQuery(song));
 
     const findVideo = async () => (
-      await searchYouTubeVideoId(term) || await getYouTubeVideoId(term)
+      await searchYouTubeSource(term, step.sourceType)
     );
 
-    findVideo().then(id => {
+    findVideo().then(async source => {
        if (!isMounted) return;
-       if (id) {
-          setDynamicVideoId(id);
+       if (source?.id) {
+          setDynamicVideoId(source.id);
+          setActiveSource(source);
           setVideoError(false);
           setVideoErrorMessage('');
        } else {
-          setVideoError(true);
-          setVideoErrorMessage('Could not find a playable YouTube match.');
+          const fallbackId = await getYouTubeVideoId(term);
+          if (!isMounted) return;
+          if (fallbackId) {
+             setDynamicVideoId(fallbackId);
+             setActiveSource({ id: fallbackId, sourceType: step.sourceType, channelName: 'YouTube' });
+             setVideoError(false);
+             setVideoErrorMessage('');
+          } else {
+             handleVideoError();
+          }
        }
        setIsFetchingId(false);
+    }).catch(error => {
+       if (!isMounted) return;
+       if (import.meta.env.DEV) console.warn('YouTube source search failed', error);
+       setIsFetchingId(false);
+       handleVideoError();
     });
 
     return () => { isMounted = false; };
-  }, [karaokeEnabled, fallbackLevel, videoUrl, isMashupMode, song.title, song.artist, iframeKey]);
+  }, [karaokeEnabled, fallbackLevel, videoUrl, isMashupMode, song, searchQuery, iframeKey]);
 
   useEffect(() => {
     if (!karaokeEnabled) {
@@ -467,7 +527,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setVideoErrorMessage('');
     
     const metadataId = extractYouTubeVideoId(videoUrl);
-    const hasTarget = (fallbackLevel === 2 && metadataId && !isMashupMode) || dynamicVideoId;
+    const hasTarget = (fallbackLevel === DIRECT_SOURCE_LEVEL && metadataId && !isMashupMode) || dynamicVideoId;
     
     if (!hasTarget) return; // Wait for a video ID
 
@@ -546,7 +606,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
           }
       };
 
-      const targetId = (fallbackLevel === 2 && metadataId && !isMashupMode) ? metadataId : dynamicVideoId;
+      const targetId = (fallbackLevel === DIRECT_SOURCE_LEVEL && metadataId && !isMashupMode) ? metadataId : dynamicVideoId;
       if (!targetId) return;
 
       playerConfig.videoId = targetId;
@@ -562,7 +622,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
             }, 500);
         }
       } catch (e) {
-          console.error("Failed to init player", e);
+          if (import.meta.env.DEV) console.warn("Failed to init player", e);
           setVideoError(true);
           setVideoErrorMessage('Could not embed this video.');
       }
@@ -574,12 +634,16 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       if (code) {
           setVideoErrorMessage(`Could not embed this video. YouTube returned error ${code}.`);
       }
-      if (fallbackLevel === 2) { setFallbackLevel(1); setIframeKey(k => k + 1); }
-      else if (fallbackLevel === 1) { setFallbackLevel(3); setIframeKey(k => k + 1); }
-      else if (fallbackLevel === 3) { setFallbackLevel(4); setIframeKey(k => k + 1); }
-      else {
+      const nextStep = SOURCE_STEPS.find(step => step.level > fallbackLevel);
+      if (fallbackLevel === DIRECT_SOURCE_LEVEL || nextStep) {
+        setFallbackLevel(fallbackLevel === DIRECT_SOURCE_LEVEL ? 1 : nextStep!.level);
+        setDynamicVideoId(null);
+        setActiveSource(null);
+        setVideoError(false);
+        setIframeKey(k => k + 1);
+      } else {
         setVideoError(true);
-        setVideoErrorMessage(prev => prev || 'Could not embed this video.');
+        setVideoErrorMessage(prev => prev || 'No playable YouTube source was found. Lyrics, chords, and scrolling still work.');
       }
   };
 
@@ -594,8 +658,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setPlayerReady(false);
     setIsFetchingId(false);
     setDynamicVideoId(null);
+    setActiveSource({
+      id: extractYouTubeVideoId(videoUrl)!,
+      sourceType: 'Original',
+      channelName: 'Direct YouTube link'
+    });
     setIframeKey(k => k + 1);
-    setFallbackLevel(2);
+    setFallbackLevel(DIRECT_SOURCE_LEVEL);
   };
   const handleInternalSearch = () => {
     setVideoError(false);
@@ -603,6 +672,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setPlayerReady(false);
     setIsFetchingId(false);
     setDynamicVideoId(null);
+    setActiveSource(null);
     setFallbackLevel(1);
     setIframeKey(k => k + 1);
   };
@@ -781,7 +851,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         if (isPlaying) playerRef.current?.pauseVideo?.();
         else playerRef.current?.playVideo?.();
       } catch (e) {
-        console.warn('Could not toggle YouTube playback', e);
+        if (import.meta.env.DEV) console.warn('Could not toggle YouTube playback', e);
       }
     }
 
@@ -857,9 +927,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
          <div className={`min-h-0 relative transition-all duration-500 ${karaokeEnabled ? 'flex-1 md:w-2/3 border-r border-white/[0.05] order-2 md:order-1' : 'w-full h-full'}`}>
              <div
                ref={scrollContainerRef}
-               onWheel={holdAutoScrollForManualLookahead}
-               onTouchStart={holdAutoScrollForManualLookahead}
-               onPointerDown={holdAutoScrollForManualLookahead}
+               onWheel={syncClockToManualScroll}
+               onTouchMove={syncClockToManualScroll}
+               onPointerMove={(event) => {
+                 if (event.buttons === 1) syncClockToManualScroll();
+               }}
                className="h-full overflow-y-auto relative custom-scrollbar pb-32"
              >
                  <div className="min-h-screen pt-28 pb-28 md:pt-40 md:pb-24 px-3 sm:px-5 md:px-12 lg:px-20 mx-auto relative z-10 max-w-4xl">
@@ -879,11 +951,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                  <div className="p-3 md:p-4 bg-white/[0.03] border-b border-white/[0.05] flex items-center justify-between backdrop-blur-lg">
                      <div className="flex items-center gap-2 text-indigo-400 font-bold uppercase tracking-widest text-xs">
                          <Youtube className="w-4 h-4" /> 
-                         {fallbackLevel === 2 ? 'Direct Source' : (fallbackLevel === 3 ? 'Official Video' : (fallbackLevel === 4 ? 'Backing Track' : 'Karaoke Search'))}
+                         {sourceLabel}
                      </div>
                      <div className="flex gap-1.5">
-                         <button onClick={() => { setFallbackLevel(1); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel === 1 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Karaoke Mode"><Mic2 className="w-3 h-3"/></button>
-                         <button onClick={() => { setFallbackLevel(3); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel === 3 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Official Video"><Youtube className="w-3 h-3"/></button>
+                         <button onClick={() => { setFallbackLevel(5); setActiveSource(null); setDynamicVideoId(null); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel === 5 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Karaoke source"><Mic2 className="w-3 h-3"/></button>
+                         <button onClick={() => { setFallbackLevel(1); setActiveSource(null); setDynamicVideoId(null); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel > 0 && fallbackLevel < 5 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Original source"><Youtube className="w-3 h-3"/></button>
                      </div>
                  </div>
 
@@ -918,6 +990,19 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                  </div>
 
                  <div className="p-4 md:p-5 flex-1 bg-black/30 flex flex-col gap-4 overflow-y-auto backdrop-blur-lg">
+                      <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
+                          <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                  <div className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Source Type</div>
+                                  <div className="text-sm text-white font-bold truncate">{sourceLabel}</div>
+                                  <div className="text-[10px] text-indigo-300/70 truncate">{sourceChannelName}</div>
+                              </div>
+                              <button onClick={handleVideoError} className="px-3 py-2 bg-white/[0.04] hover:bg-white/[0.08] text-indigo-300 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-white/[0.06] shrink-0">
+                                  Change
+                              </button>
+                          </div>
+                      </div>
+
                       {/* Sync Controls */}
                       <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
                           <div className="flex justify-between items-center mb-2">
@@ -934,7 +1019,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                       <div>
                           <label className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-2 block">Finder</label>
                           <div className="flex gap-2">
-                             <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleInternalSearch()} className="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3 py-2 text-xs text-gray-300 outline-none focus:border-indigo-500/50 transition-colors backdrop-blur-lg" placeholder="Search karaoke..." />
+                             <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleInternalSearch()} className="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3 py-2 text-xs text-gray-300 outline-none focus:border-indigo-500/50 transition-colors backdrop-blur-lg" placeholder="Search official source..." />
                              <button onClick={handleInternalSearch} className="px-4 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 rounded-xl text-xs font-bold transition-all border border-indigo-500/30 flex items-center gap-2"><Search className="w-3 h-3" /> Play</button>
                           </div>
                       </div>

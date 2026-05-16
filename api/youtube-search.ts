@@ -32,6 +32,35 @@ const canResolveOEmbed = async (videoId: string) => {
   }
 };
 
+const fetchOEmbed = async (videoId: string) => {
+  try {
+    const response = await withTimeout(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&format=json`,
+      5000
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return {
+      id: videoId,
+      title: typeof data?.title === 'string' ? data.title : undefined,
+      channelName: typeof data?.author_name === 'string' ? data.author_name : undefined
+    };
+  } catch {
+    return null;
+  }
+};
+
+const classifySource = (query: string, candidate: { title?: string; channelName?: string }) => {
+  const text = `${query} ${candidate.title || ''} ${candidate.channelName || ''}`.toLowerCase();
+  if (/\bkaraoke\b/.test(text)) return 'Karaoke';
+  if (/\binstrumental\b|\bbacking track\b/.test(text)) return 'Instrumental';
+  if (/\bcover\b/.test(text)) return 'Cover';
+  if (/\blyric video\b|\blyrics\b/.test(text)) return 'Lyric Video';
+  if (/\bofficial audio\b|\btopic\b/.test(text)) return 'Official Audio';
+  if (/\bofficial\b|\bvevo\b|\brecords\b|\bmusic\b/.test(text)) return 'Original';
+  return 'Fallback';
+};
+
 const extractVideoIds = (html: string) => {
   const ids = [
     ...Array.from(html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)).map(match => match[1]),
@@ -50,9 +79,10 @@ const searchYouTube = async (query: string) => {
 
     const candidates = extractVideoIds(await response.text());
     for (const id of candidates) {
-      if (await canResolveOEmbed(id)) return id;
+      const metadata = await fetchOEmbed(id);
+      if (metadata) return { ...metadata, sourceType: classifySource(query, metadata) };
     }
-    return candidates[0] || null;
+    return candidates[0] ? { id: candidates[0], sourceType: 'Fallback' } : null;
   } catch {
     return null;
   }
@@ -77,5 +107,5 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'Missing search query.' });
   }
 
-  return res.status(200).json({ id: await searchYouTube(query) });
+  return res.status(200).json((await searchYouTube(query)) || { id: null });
 }

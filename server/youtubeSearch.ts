@@ -5,6 +5,13 @@ type YouTubeSearchPayload = {
   videoId?: string;
 };
 
+type Candidate = {
+  id: string;
+  title?: string;
+  channelName?: string;
+  sourceType?: string;
+};
+
 const isValidVideoId = (id?: string | null) => !!id && YOUTUBE_ID_PATTERN.test(id);
 
 const unique = <T,>(items: T[]) => Array.from(new Set(items));
@@ -43,6 +50,35 @@ const canResolveOEmbed = async (videoId: string) => {
   }
 };
 
+const fetchOEmbed = async (videoId: string): Promise<Candidate | null> => {
+  try {
+    const response = await withTimeout((signal) => fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&format=json`, {
+      signal,
+      headers: { 'User-Agent': 'PlectrumAI/1.0' }
+    }), 5000);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return {
+      id: videoId,
+      title: typeof data?.title === 'string' ? data.title : undefined,
+      channelName: typeof data?.author_name === 'string' ? data.author_name : undefined
+    };
+  } catch {
+    return null;
+  }
+};
+
+const classifySource = (query: string, candidate: Candidate) => {
+  const text = `${query} ${candidate.title || ''} ${candidate.channelName || ''}`.toLowerCase();
+  if (/\bkaraoke\b/.test(text)) return 'Karaoke';
+  if (/\binstrumental\b|\bbacking track\b/.test(text)) return 'Instrumental';
+  if (/\bcover\b/.test(text)) return 'Cover';
+  if (/\blyric video\b|\blyrics\b/.test(text)) return 'Lyric Video';
+  if (/\bofficial audio\b|\btopic\b/.test(text)) return 'Official Audio';
+  if (/\bofficial\b|\bvevo\b|\brecords\b|\bmusic\b/.test(text)) return 'Original';
+  return 'Fallback';
+};
+
 const extractVideoIds = (html: string) => {
   const ids = [
     ...Array.from(html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)).map(match => match[1]),
@@ -58,10 +94,11 @@ const searchYouTube = async (query: string) => {
     const candidates = extractVideoIds(html);
 
     for (const id of candidates) {
-      if (await canResolveOEmbed(id)) return id;
+      const metadata = await fetchOEmbed(id);
+      if (metadata) return { ...metadata, sourceType: classifySource(query, metadata) };
     }
 
-    return candidates[0] || null;
+    return candidates[0] ? { id: candidates[0], sourceType: 'Fallback' } : null;
   } catch {
     return null;
   }
@@ -85,5 +122,6 @@ export const handleYouTubeSearchRequest = async (payload: YouTubeSearchPayload, 
     return { status: 400, body: { error: 'Missing search query.' } };
   }
 
-  return { status: 200, body: { id: await searchYouTube(query) } };
+  const result = await searchYouTube(query);
+  return { status: 200, body: result || { id: null } };
 };

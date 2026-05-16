@@ -12,6 +12,7 @@ interface PracticeRoomProps {
 }
 
 type VideoFilter = 'none' | 'warm' | 'stage' | 'noir' | 'soft';
+type NoiseReductionLevel = 'low' | 'medium' | 'high';
 
 const PRACTICE_ROOM_STATE_KEY = 'plectrum_practice_room_state_v1';
 
@@ -20,6 +21,10 @@ type PersistedPracticeRoomState = {
   activeFilter?: VideoFilter;
   bgBlur?: boolean;
   ringLight?: boolean;
+  studioAudio?: boolean;
+  noiseReduction?: NoiseReductionLevel;
+  inputBoost?: number;
+  deepDenoise?: boolean;
   splitRatio?: number;
   isVaultOpen?: boolean;
   scrollSpeed?: number;
@@ -62,6 +67,10 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
   const [activeFilter, setActiveFilter] = useState<VideoFilter>(() => persistedState.current.activeFilter || 'none');
   const [bgBlur, setBgBlur] = useState(() => Boolean(persistedState.current.bgBlur));
   const [ringLight, setRingLight] = useState(() => Boolean(persistedState.current.ringLight));
+  const [studioAudio, setStudioAudio] = useState(() => persistedState.current.studioAudio !== false);
+  const [noiseReduction, setNoiseReduction] = useState<NoiseReductionLevel>(() => persistedState.current.noiseReduction || (persistedState.current.deepDenoise ? 'high' : 'medium'));
+  const [inputBoost, setInputBoost] = useState(() => clampNumber(persistedState.current.inputBoost, 1.08, 0.75, 1.6));
+  const [studioWarning, setStudioWarning] = useState('');
   
   // Layout State
   const [splitRatio, setSplitRatio] = useState(() => clampNumber(persistedState.current.splitRatio, 45, 20, 80)); // % for Video
@@ -81,6 +90,10 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
   const chunksRef = useRef<Blob[]>([]);
   const timerIntervalRef = useRef<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const recordingAudioContextRef = useRef<AudioContext | null>(null);
+  const recordingAudioNodesRef = useRef<AudioNode[]>([]);
+  const recordingAnimationFrameRef = useRef<number | null>(null);
+  const recordingOutputStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
       if (initialSong) setSelectedSong(initialSong);
@@ -92,12 +105,15 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
           activeFilter,
           bgBlur,
           ringLight,
+          studioAudio,
+          noiseReduction,
+          inputBoost,
           splitRatio,
           isVaultOpen,
           scrollSpeed,
           fontSize
       }));
-  }, [selectedSong?.id, activeFilter, bgBlur, ringLight, splitRatio, isVaultOpen, scrollSpeed, fontSize]);
+  }, [selectedSong?.id, activeFilter, bgBlur, ringLight, studioAudio, noiseReduction, inputBoost, splitRatio, isVaultOpen, scrollSpeed, fontSize]);
 
   useEffect(() => {
       if (lyricsRef.current) lyricsRef.current.scrollTop = 0;
@@ -192,20 +208,71 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
     if (isTourMode) return () => window.removeEventListener('resize', checkOrientation);
 
     let activeStream: MediaStream | null = null;
+    const getCameraStream = async () => {
+      const audioConstraints: MediaTrackConstraints = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: { ideal: 1 },
+          sampleRate: { ideal: 48000 },
+          sampleSize: { ideal: 16 }
+      };
+
+      const attempts: MediaStreamConstraints[] = [
+        {
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30, max: 30 },
+            aspectRatio: { ideal: 16 / 9 },
+            facingMode: 'user'
+          },
+          audio: audioConstraints
+        },
+        {
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30, max: 30 },
+            aspectRatio: { ideal: 16 / 9 },
+            facingMode: 'user'
+          },
+          audio: audioConstraints
+        },
+        {
+          video: { facingMode: 'user' },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        },
+        { video: true, audio: true }
+      ];
+
+      let lastError: unknown = null;
+      for (const constraints of attempts) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError;
+    };
+
     const startCamera = async () => {
       try {
-        // High quality constraints
-        const s = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, 
-            audio: { echoCancellation: true, noiseSuppression: true } 
-        });
+        const s = await getCameraStream();
         activeStream = s;
         setStream(s);
+        setStudioWarning('');
         if (videoRef.current) {
           videoRef.current.srcObject = s;
         }
       } catch (err) {
-        console.error("Camera access denied", err);
+        setStudioWarning('Camera or microphone access failed. Check browser permissions and try again.');
+        if (import.meta.env.DEV) console.warn("Camera access denied", err);
       }
     };
     
@@ -220,6 +287,7 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       if (scrollIntervalRef.current) cancelAnimationFrame(scrollIntervalRef.current);
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      cleanupRecordingAudio();
       window.removeEventListener('resize', checkOrientation);
     };
   }, [isTourMode]);
@@ -251,24 +319,215 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
     setRecordings(recs.sort((a, b) => b.createdAt - a.createdAt));
   };
 
+  const createSoftLimiterCurve = () => {
+      const samples = 2048;
+      const curve = new Float32Array(samples);
+      const drive = 2.1;
+      const normalizer = Math.tanh(drive);
+      for (let i = 0; i < samples; i += 1) {
+          const x = (i / (samples - 1)) * 2 - 1;
+          curve[i] = Math.tanh(x * drive) / normalizer;
+      }
+      return curve;
+  };
+
+  const cleanupRecordingAudio = () => {
+      if (recordingAnimationFrameRef.current) {
+          cancelAnimationFrame(recordingAnimationFrameRef.current);
+          recordingAnimationFrameRef.current = null;
+      }
+      if (recordingOutputStreamRef.current) {
+          recordingOutputStreamRef.current.getTracks().forEach(track => track.stop());
+          recordingOutputStreamRef.current = null;
+      }
+      recordingAudioNodesRef.current.forEach(node => {
+          try { node.disconnect(); } catch {}
+      });
+      recordingAudioNodesRef.current = [];
+      if (recordingAudioContextRef.current && recordingAudioContextRef.current.state !== 'closed') {
+          recordingAudioContextRef.current.close().catch(() => {});
+      }
+      recordingAudioContextRef.current = null;
+  };
+
+  const getNoiseProfile = () => {
+      if (noiseReduction === 'high') {
+          return { threshold: 0.017, floor: 0.42, attack: 0.035, release: 0.36, highPass: 88, compressorThreshold: -25, ratio: 3.4 };
+      }
+      if (noiseReduction === 'low') {
+          return { threshold: 0.009, floor: 0.68, attack: 0.025, release: 0.5, highPass: 72, compressorThreshold: -20, ratio: 2.4 };
+      }
+      return { threshold: 0.013, floor: 0.55, attack: 0.03, release: 0.42, highPass: 80, compressorThreshold: -23, ratio: 2.9 };
+  };
+
+  const startGentleExpander = (ctx: AudioContext, analyser: AnalyserNode, gateGain: GainNode) => {
+      const profile = getNoiseProfile();
+      const samples = new Float32Array(analyser.fftSize);
+      let smoothedGain = 1;
+
+      const tick = () => {
+          analyser.getFloatTimeDomainData(samples);
+          let sumSquares = 0;
+          for (let i = 0; i < samples.length; i += 1) {
+              sumSquares += samples[i] * samples[i];
+          }
+          const rms = Math.sqrt(sumSquares / samples.length);
+          const targetGain = rms < profile.threshold ? profile.floor : 1;
+          const coefficient = targetGain > smoothedGain ? profile.attack : profile.release;
+          smoothedGain += (targetGain - smoothedGain) * coefficient;
+          gateGain.gain.setTargetAtTime(smoothedGain, ctx.currentTime, 0.035);
+          recordingAnimationFrameRef.current = requestAnimationFrame(tick);
+      };
+
+      tick();
+  };
+
+  const createEnhancedAudioStream = (inputStream: MediaStream): MediaStream | null => {
+      const audioTrack = inputStream.getAudioTracks()[0];
+      if (!audioTrack) return null;
+
+      cleanupRecordingAudio();
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return null;
+
+      try {
+          const ctx = new AudioContextClass({ latencyHint: 'interactive', sampleRate: 48000 });
+          recordingAudioContextRef.current = ctx;
+          const profile = getNoiseProfile();
+
+          const source = ctx.createMediaStreamSource(new MediaStream([audioTrack]));
+          const highPass = ctx.createBiquadFilter();
+          highPass.type = 'highpass';
+          highPass.frequency.value = profile.highPass;
+          highPass.Q.value = 0.72;
+
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 1024;
+          analyser.smoothingTimeConstant = 0.72;
+
+          const gateGain = ctx.createGain();
+          gateGain.gain.value = 1;
+
+          const hum50 = ctx.createBiquadFilter();
+          hum50.type = 'notch';
+          hum50.frequency.value = 50;
+          hum50.Q.value = 16;
+
+          const hum60 = ctx.createBiquadFilter();
+          hum60.type = 'notch';
+          hum60.frequency.value = 60;
+          hum60.Q.value = 16;
+
+          const lowShelf = ctx.createBiquadFilter();
+          lowShelf.type = 'lowshelf';
+          lowShelf.frequency.value = 170;
+          lowShelf.gain.value = noiseReduction === 'high' ? -1.8 : -1;
+
+          const presence = ctx.createBiquadFilter();
+          presence.type = 'peaking';
+          presence.frequency.value = 3100;
+          presence.Q.value = 0.9;
+          presence.gain.value = 1.35;
+
+          const air = ctx.createBiquadFilter();
+          air.type = 'highshelf';
+          air.frequency.value = 7600;
+          air.gain.value = noiseReduction === 'high' ? 0.7 : 1.1;
+
+          const lowPass = ctx.createBiquadFilter();
+          lowPass.type = 'lowpass';
+          lowPass.frequency.value = noiseReduction === 'high' ? 15000 : 17000;
+          lowPass.Q.value = 0.65;
+
+          const compressor = ctx.createDynamicsCompressor();
+          compressor.threshold.value = profile.compressorThreshold;
+          compressor.knee.value = 24;
+          compressor.ratio.value = profile.ratio;
+          compressor.attack.value = 0.008;
+          compressor.release.value = 0.22;
+
+          const makeup = ctx.createGain();
+          makeup.gain.value = inputBoost;
+
+          const limiter = ctx.createWaveShaper();
+          limiter.curve = createSoftLimiterCurve();
+          limiter.oversample = '2x';
+
+          const ceiling = ctx.createGain();
+          ceiling.gain.value = 0.92;
+
+          const destination = ctx.createMediaStreamDestination();
+          source.connect(highPass);
+          highPass.connect(analyser);
+          highPass
+              .connect(gateGain)
+              .connect(hum50)
+              .connect(hum60)
+              .connect(lowShelf)
+              .connect(presence)
+              .connect(air)
+              .connect(lowPass)
+              .connect(compressor)
+              .connect(makeup)
+              .connect(limiter)
+              .connect(ceiling)
+              .connect(destination);
+
+          recordingAudioNodesRef.current = [
+              source, highPass, analyser, gateGain, hum50, hum60, lowShelf, presence, air, lowPass,
+              compressor, makeup, limiter, ceiling, destination
+          ];
+
+          startGentleExpander(ctx, analyser, gateGain);
+          if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+          recordingOutputStreamRef.current = destination.stream;
+          setStudioWarning('');
+          return destination.stream;
+      } catch (error) {
+          cleanupRecordingAudio();
+          setStudioWarning('Advanced studio processing is not available in this browser. Recording with normal mic audio.');
+          if (import.meta.env.DEV) console.warn('Studio audio setup failed', error);
+          return null;
+      }
+  };
+
   const startRecording = () => {
     if (!stream || !canvasRef.current) return;
     
     // Capture stream from CANVAS (Video + Filters, but NO Ring Light overlay)
     const canvasStream = canvasRef.current.captureStream(30); // 30 FPS
     
-    // Add audio tracks from original stream (Canvas has no audio)
-    stream.getAudioTracks().forEach(track => {
-        canvasStream.addTrack(track);
-    });
+    try {
+        const audioStream = studioAudio ? createEnhancedAudioStream(stream) : null;
+        const audioTracks = audioStream?.getAudioTracks().length ? audioStream.getAudioTracks() : stream.getAudioTracks();
+        audioTracks.forEach(track => {
+            canvasStream.addTrack(track);
+        });
+    } catch (error) {
+        stream.getAudioTracks().forEach(track => canvasStream.addTrack(track));
+        setStudioWarning('Studio audio could not be attached. Recording with normal mic audio.');
+        if (import.meta.env.DEV) console.warn('Could not attach processed audio track', error);
+    }
 
     chunksRef.current = [];
-    // Prioritize high quality codecs
-    const options = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') 
-        ? { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 2500000 } 
-        : { mimeType: 'video/webm', videoBitsPerSecond: 2500000 };
+    const recorderOptions = [
+        { mimeType: 'video/webm;codecs=vp9,opus', videoBitsPerSecond: 5200000, audioBitsPerSecond: 192000 },
+        { mimeType: 'video/webm;codecs=vp8,opus', videoBitsPerSecond: 4200000, audioBitsPerSecond: 160000 },
+        { mimeType: 'video/webm', videoBitsPerSecond: 3600000, audioBitsPerSecond: 160000 }
+    ];
+    const options = recorderOptions.find(option => MediaRecorder.isTypeSupported(option.mimeType)) || {
+        videoBitsPerSecond: 3200000,
+        audioBitsPerSecond: 128000
+    };
         
-    const recorder = new MediaRecorder(canvasStream, options);
+    let recorder: MediaRecorder;
+    try {
+        recorder = new MediaRecorder(canvasStream, options);
+    } catch (error) {
+        if (import.meta.env.DEV) console.warn('High-quality MediaRecorder options failed, using browser defaults', error);
+        recorder = new MediaRecorder(canvasStream);
+        setStudioWarning('This browser ignored the high-quality recorder settings. Recording continues normally.');
+    }
     
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
     recorder.onstop = async () => {
@@ -283,6 +542,7 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
       await saveRecording(newRecording);
       setRecordings(prev => [newRecording, ...prev]);
       setTimer(0);
+      cleanupRecordingAudio();
     };
     recorder.start();
     mediaRecorderRef.current = recorder;
@@ -299,6 +559,7 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
       mediaRecorderRef.current.stop();
       setIsRecording(false);
       setIsScrolling(false); 
+      cleanupRecordingAudio();
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     }
   };
@@ -499,6 +760,38 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
                             </button>
                         </div>
                     </div>
+                    <div>
+                         <label className="text-[10px] uppercase font-bold text-amber-200/60 mb-2 block">Audio Studio</label>
+                         <div className="space-y-2">
+                             <button onClick={() => setStudioAudio(!studioAudio)} className={`w-full flex items-center justify-between px-3 py-2 rounded border text-xs font-bold transition-all ${studioAudio ? 'bg-emerald-900/40 border-emerald-500 text-emerald-300' : 'bg-[#0f0a08] border-[#3e2723] text-amber-700'}`}>
+                                <span className="flex items-center gap-2"><Sparkles className="w-3 h-3"/> Studio Mode</span>
+                                <div className={`w-8 h-4 rounded-full relative ${studioAudio ? 'bg-emerald-500' : 'bg-slate-700'}`}><div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${studioAudio ? 'left-4.5' : 'left-0.5'}`}></div></div>
+                             </button>
+                             <div className={`grid grid-cols-3 gap-1 ${!studioAudio ? 'opacity-40 pointer-events-none' : ''}`}>
+                                {(['low', 'medium', 'high'] as NoiseReductionLevel[]).map(level => (
+                                    <button
+                                      key={level}
+                                      onClick={() => setNoiseReduction(level)}
+                                      className={`px-2 py-1.5 rounded border text-[10px] font-black uppercase transition-all ${noiseReduction === level ? 'bg-cyan-900/50 border-cyan-400 text-cyan-200' : 'bg-[#0f0a08] border-[#3e2723] text-amber-700'}`}
+                                    >
+                                      {level}
+                                    </button>
+                                ))}
+                             </div>
+                             <div className={`${!studioAudio ? 'opacity-40 pointer-events-none' : ''}`}>
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[10px] uppercase font-bold text-amber-200/50">Input Boost</span>
+                                    <span className="text-[10px] font-mono text-emerald-300">{inputBoost.toFixed(2)}x</span>
+                                </div>
+                                <input type="range" min="0.75" max="1.6" step="0.01" value={inputBoost} onChange={e => setInputBoost(clampNumber(e.target.value, 1.08, 0.75, 1.6))} className="w-full h-1 bg-slate-800 rounded-lg accent-emerald-500 cursor-pointer" />
+                             </div>
+                             {studioWarning && (
+                                <p className="text-[10px] leading-relaxed text-amber-300/70 bg-amber-950/30 border border-amber-500/20 rounded-lg p-2">
+                                    {studioWarning}
+                                </p>
+                             )}
+                         </div>
+                    </div>
                 </div>
             </div>
         )}
@@ -583,9 +876,6 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
 
           <div 
             ref={lyricsRef}
-            onWheel={() => setIsScrolling(false)}
-            onTouchStart={() => setIsScrolling(false)}
-            onPointerDown={() => setIsScrolling(false)}
             className="flex-1 overflow-y-auto overscroll-contain p-4 bg-[#0a0503] relative custom-scrollbar bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-black via-[#0a0503] to-black"
           >
               {selectedSong ? (
