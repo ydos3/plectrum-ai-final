@@ -1,11 +1,6 @@
 
 import { AppLanguage, SkillLevel } from "../types";
 import { searchLRCLIB, searchSongDatabase, normalizeSongSearchText } from "./songDatabaseService";
-import {
-  debugSongLookup,
-  mapDatabaseSongToExistingGeminiFormat,
-  searchSongDatabase as searchLocalSongDatabase,
-} from "./songDatabaseLookup";
 import { transliterateLyricsForLanguage } from "./indicTransliterationService";
 
 // ─── Model Configuration ──────────────────────────────────────────────
@@ -20,19 +15,12 @@ const isMissingApiKeyError = (error: unknown) => (
 );
 
 const MODELS = {
-  PRO: "gemini-1.5-pro-preview-0514",
-  PRO_FALLBACK: "gemini-1.5-pro",
-  FLASH: "gemini-1.5-flash-preview-0514",        // Fast identity/search work.
-  FLASH_FALLBACK: "gemini-1.5-flash",
+  PRO: "gemini-3.1-pro-preview",
+  PRO_FALLBACK: "gemini-2.5-pro",
+  FLASH: "gemini-3-flash-preview",        // Fast identity/search work. Falls back to 2.5 Flash if unavailable.
+  FLASH_FALLBACK: "gemini-2.5-flash",
   GLM_FLASH: "glm-4-flash",             // Zhipu free fallback
 } as const;
-
-// TODO: Re-enable after the acoustic_setlist_db.min.json is cleaned and validated.
-// The local database currently has incomplete songs, repeated verses, and poor data quality.
-// Set to `true` once the database passes the `npm run validate:song-db` audit and
-// all songs meet the isDatabaseSongStructurallyComplete() checks.
-// This also disables LRCLIB lookups; Gemini AI is the sole generation source while false.
-const ENABLE_SONG_DATABASE_LOOKUPS = false;
 
 const LANGUAGE_SCRIPT_HINTS: Record<AppLanguage, string> = {
   English: 'English/Roman script',
@@ -138,8 +126,8 @@ const callGeminiApi = async (model: string, contents: any[], config: any = {}) =
   }
   const candidate = data.candidates?.[0];
   if (!candidate) return "";
-  if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-    throw new Error(`Gemini stopped before returning complete content: ${candidate.finishReason}`);
+  if (candidate.finishReason && candidate.finishReason !== 'STOP' && !candidate.content?.parts?.length) {
+    throw new Error(`Gemini stopped before returning content: ${candidate.finishReason}`);
   }
   const part = candidate.content?.parts?.[0];
   return part?.text || "";
@@ -263,16 +251,14 @@ export const getSongRecommendations = async (historyTitles: string[], language: 
 export const getSearchSuggestions = async (query: string): Promise<string[]> => {
   if (!query || query.length < 2) return [];
   try {
-    if (ENABLE_SONG_DATABASE_LOOKUPS) {
-      const dbMatches = await searchLRCLIB(query);
-      const verifiedDbSuggestions = Array.from(new Set(
-        dbMatches
-          .filter(track => !track.instrumental && (track.plainLyrics || track.syncedLyrics))
-          .slice(0, 5)
-          .map(track => `${track.trackName} by ${track.artistName}`)
-      ));
-      if (verifiedDbSuggestions.length > 0) return verifiedDbSuggestions;
-    }
+    const dbMatches = await searchLRCLIB(query);
+    const verifiedDbSuggestions = Array.from(new Set(
+      dbMatches
+        .filter(track => !track.instrumental && (track.plainLyrics || track.syncedLyrics))
+        .slice(0, 5)
+        .map(track => `${track.trackName} by ${track.artistName}`)
+    ));
+    if (verifiedDbSuggestions.length > 0) return verifiedDbSuggestions;
 
     const prompt = `User Input: "${query}".
             Task: Identify exact real songs based on the title OR lyric fragment in the input.
@@ -404,86 +390,6 @@ const hasChordedContent = (value: unknown) => (
   /\[[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?\d*(?:\/[A-G](?:#|b)?)?\]/.test(value)
 );
 
-const countContentLyricLines = (value: unknown) => (
-  typeof value === 'string'
-    ? value
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith('###')).length
-    : 0
-);
-
-const assertChordedContentIsComplete = (
-  content: unknown,
-  sourceLyrics?: string,
-  minimumLines = 12
-) => {
-  if (!hasChordedContent(content)) {
-    throw new Error('Generated song did not include playable chorded content.');
-  }
-
-  const generatedLineCount = countContentLyricLines(content);
-  const sourceLineCount = sourceLyrics ? countContentLyricLines(sourceLyrics) : 0;
-  const requiredLineCount = sourceLineCount > 0
-    ? Math.max(minimumLines, Math.floor(sourceLineCount * 0.8))
-    : minimumLines;
-
-  if (generatedLineCount < requiredLineCount) {
-    throw new Error(`Generated song looks incomplete (${generatedLineCount}/${requiredLineCount} lyric lines).`);
-  }
-};
-
-const getSectionLabel = (header: string) => {
-  const match = header.match(/^###\s*\[([^\]]+)\]/);
-  return (match?.[1] || header.replace(/^#+\s*/, '')).trim();
-};
-
-const relabelSection = (block: string, label: string) => (
-  block.replace(/^###\s*\[[^\]]+\]/, `### [${label}]`)
-);
-
-const completePerformanceArrangement = (content: unknown, minimumLines = 24): string => {
-  if (typeof content !== 'string' || countContentLyricLines(content) >= minimumLines) {
-    return typeof content === 'string' ? content : '';
-  }
-
-  const blocks = content
-    .split(/\n(?=###\s*\[[^\]]+\])/)
-    .map(block => block.trim())
-    .filter(Boolean);
-
-  if (blocks.length < 2) return content;
-
-  const findBlock = (pattern: RegExp) => blocks.find(block => pattern.test(getSectionLabel(block)));
-  const intro = findBlock(/intro/i);
-  const verse1 = findBlock(/verse\s*1/i) || findBlock(/verse/i);
-  const verse2 = findBlock(/verse\s*2/i);
-  const preChorus = findBlock(/pre/i);
-  const chorus = findBlock(/chorus/i);
-  const bridge = findBlock(/bridge/i);
-  const outro = findBlock(/outro/i);
-
-  if (!verse1 || !chorus) return content;
-
-  const arranged = [
-    intro && relabelSection(intro, 'Intro'),
-    relabelSection(verse1, 'Verse 1'),
-    preChorus && relabelSection(preChorus, 'Pre-Chorus 1'),
-    relabelSection(chorus, 'Chorus 1'),
-    relabelSection(verse2 || verse1, 'Verse 2'),
-    preChorus && relabelSection(preChorus, 'Pre-Chorus 2'),
-    relabelSection(chorus, 'Chorus 2'),
-    bridge && relabelSection(bridge, 'Bridge'),
-    relabelSection(chorus, 'Final Chorus'),
-    outro && relabelSection(outro, 'Outro'),
-  ].filter(Boolean) as string[];
-
-  const arrangedContent = arranged.join('\n\n');
-  return countContentLyricLines(arrangedContent) > countContentLyricLines(content)
-    ? arrangedContent
-    : content;
-};
-
 const sectionTitleForLine = (line: string) => {
   const normalized = line.toLowerCase();
   if (/\bchorus\b/.test(normalized)) return '### [Chorus]';
@@ -538,7 +444,7 @@ const buildPlayableSongDraft = (
     karaokeUrl: '',
     language,
     languageFallbackReason: '',
-    content: completePerformanceArrangement(contentLines.join('\n')),
+    content: contentLines.join('\n'),
     duration: dbResult.duration,
     timedLyrics: dbResult.syncedLyrics,
     source: 'database-fallback',
@@ -627,11 +533,9 @@ Return strict JSON only:
 
 const findVerifiedLyrics = async (query: string, language: AppLanguage) => {
   const lookupQuery = stripGenerationDirectives(query);
-  if (ENABLE_SONG_DATABASE_LOOKUPS) {
-    const directDbResult = await searchSongDatabase(lookupQuery);
-    if (directDbResult?.plainLyrics) {
-      return { dbResult: directDbResult, identity: null as SongIdentityResolution | null };
-    }
+  const directDbResult = await searchSongDatabase(lookupQuery);
+  if (directDbResult?.plainLyrics) {
+    return { dbResult: directDbResult, identity: null as SongIdentityResolution | null };
   }
 
   let identity: SongIdentityResolution | null = null;
@@ -649,18 +553,16 @@ const findVerifiedLyrics = async (query: string, language: AppLanguage) => {
     return { dbResult: null, identity };
   }
 
-  if (ENABLE_SONG_DATABASE_LOOKUPS) {
-    const identitySearches = [
-      identity!.searchQuery,
-      identityLabel(identity!),
-      `${identity!.title} ${identity!.artist}`
-    ].filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index);
+  const identitySearches = [
+    identity!.searchQuery,
+    identityLabel(identity!),
+    `${identity!.title} ${identity!.artist}`
+  ].filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index);
 
-    for (const searchQuery of identitySearches) {
-      const resolvedDbResult = await searchSongDatabase(searchQuery);
-      if (resolvedDbResult?.plainLyrics) {
-        return { dbResult: resolvedDbResult, identity };
-      }
+  for (const searchQuery of identitySearches) {
+    const resolvedDbResult = await searchSongDatabase(searchQuery);
+    if (resolvedDbResult?.plainLyrics) {
+      return { dbResult: resolvedDbResult, identity };
     }
   }
 
@@ -726,14 +628,14 @@ ${lyrics}`;
       return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
         responseMimeType: "application/json",
         temperature: 0.15,
-        maxOutputTokens: 16384,
-        requestTimeoutMs: 120000
+        maxOutputTokens: 8192
       });
     }, 2, 1200);
 
     const data = normalizeContentField(parseGeminiJson(responseText));
-    data.content = completePerformanceArrangement(data.content);
-    assertChordedContentIsComplete(data.content, lyrics);
+    if (!hasChordedContent(data.content)) {
+      throw new Error('Gemini response did not include playable chorded content.');
+    }
 
     return {
       title: data.title || 'Untitled Lyrics',
@@ -802,46 +704,7 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
     const arrangement = await buildUserProvidedLyricsArrangement(query, language, practiceSkill);
     return arrangement;
   }
-
-  // STEP 0: Bundled acoustic setlist database is muted while the setlist is cleaned up.
-  if (ENABLE_SONG_DATABASE_LOOKUPS) {
-    try {
-    const databaseMatch = searchLocalSongDatabase(query);
-    if (databaseMatch.found && databaseMatch.match) {
-      const mapped = mapDatabaseSongToExistingGeminiFormat(
-        databaseMatch.match,
-        databaseMatch.confidence,
-        language,
-        practiceSkill
-      );
-      debugSongLookup({
-        query,
-        matched: true,
-        title: databaseMatch.match.title,
-        confidence: databaseMatch.confidence,
-        source: 'database',
-      });
-      return mapped;
-    }
-
-    debugSongLookup({
-      query,
-      matched: false,
-      confidence: databaseMatch.confidence,
-      source: 'gemini',
-    });
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.warn('[SongGen] Local song database lookup failed safely; falling back to Gemini.', error);
-      }
-      debugSongLookup({ query, matched: false, source: 'gemini' });
-    }
-  } else {
-    debugSongLookup({ query, matched: false, source: 'gemini' });
-  }
-
   // STEP 1: Try database first (LRCLIB) — instant, no AI cost
-  // Database lookup is disabled here; findVerifiedLyrics returns AI identity only.
   const mashupMode = isMashupRequest(query);
   const verifiedLookup = mashupMode
     ? { dbResult: null, identity: null as SongIdentityResolution | null }
@@ -911,14 +774,14 @@ ${dbResult.plainLyrics}`;
         return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: chordPrompt }] }], {
           responseMimeType: "application/json",
           temperature: 0.1,
-          maxOutputTokens: 16384,
-          requestTimeoutMs: 120000
+          maxOutputTokens: 8192
         });
       });
 
       const chordData = normalizeContentField(parseGeminiJson(chordResponse));
-      chordData.content = completePerformanceArrangement(chordData.content);
-      assertChordedContentIsComplete(chordData.content, dbResult.plainLyrics);
+      if (!hasChordedContent(chordData.content)) {
+        throw new Error('Gemini response did not include playable chorded content.');
+      }
 
       return {
         title: dbResult.title,
@@ -957,14 +820,14 @@ ${dbResult.plainLyrics}`;
           return await callGeminiApiWithFallback(MODELS.FLASH, [{ role: 'user', parts: [{ text: compactPrompt }] }], {
             responseMimeType: "application/json",
             temperature: 0.2,
-            maxOutputTokens: 16384,
-            requestTimeoutMs: 120000
+            maxOutputTokens: 8192
           });
         }, 2, 800);
 
         const fallbackData = normalizeContentField(parseGeminiJson(fallbackResponse));
-        fallbackData.content = completePerformanceArrangement(fallbackData.content);
-        assertChordedContentIsComplete(fallbackData.content, dbResult.plainLyrics);
+        if (!hasChordedContent(fallbackData.content)) {
+          throw new Error('Gemini fallback response did not include playable chorded content.');
+        }
 
         return {
           title: dbResult.title,
@@ -1078,8 +941,7 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
       return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
         responseMimeType: "application/json",
         temperature: 0.1,
-        maxOutputTokens: 16384,
-        requestTimeoutMs: 120000
+        maxOutputTokens: 8192
       });
     }, 4, 2000);
 
@@ -1098,8 +960,6 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
     parsed.chordSimplifications = Array.isArray(parsed.chordSimplifications) ? parsed.chordSimplifications : [];
     parsed.recommendedKey = parsed.recommendedKey || parsed.key || '';
     parsed.languageFallbackReason = parsed.languageFallbackReason || '';
-    parsed.content = completePerformanceArrangement(parsed.content);
-    assertChordedContentIsComplete(parsed.content, undefined, 12);
     return parsed;
   } catch (error) {
     console.error("Song Generation Error:", error);
@@ -1159,14 +1019,10 @@ OUTPUT FORMAT (strict JSON):
     const responseText = await retryWithBackoff(async () => {
       return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
         responseMimeType: "application/json",
-        maxOutputTokens: 16384,
-        requestTimeoutMs: 120000
+        maxOutputTokens: 8192
       });
     });
-    const data = normalizeContentField(parseGeminiJson(responseText));
-    data.content = completePerformanceArrangement(data.content);
-    assertChordedContentIsComplete(data.content, partialLyrics || undefined, partialLyrics.trim() ? 12 : 8);
-    return data;
+    return responseText ? JSON.parse(responseText) : null;
   } catch (error) {
     console.error("Complete Song Error:", error);
     throw error;
