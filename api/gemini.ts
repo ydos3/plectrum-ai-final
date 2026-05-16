@@ -1,14 +1,7 @@
 const ALLOWED_MODELS = new Set([
-  'gemini-3.1-pro-preview',
-  'gemini-3.1-flash-preview',
-  'gemini-3-pro-preview',
-  'gemini-3-flash-preview',
   'gemini-2.5-pro',
-  'gemini-2.5-flash',
-  'glm-4-flash'
+  'gemini-2.5-flash'
 ]);
-
-const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY || 'ddd4a35a6ffe43c0ae534a1bcf3b6683.87gtrpBTIyFkmEQ0';
 
 const getServerApiKey = () => {
   return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.API_KEY || '';
@@ -41,60 +34,6 @@ export default async function handler(req: any, res: any) {
     }
 
     const { systemInstruction, ...generationConfig } = payload.generationConfig || {};
-
-    if (payload.model.startsWith('glm-')) {
-      const messages: any[] = [];
-      if (systemInstruction?.parts?.[0]?.text) {
-        messages.push({ role: 'system', content: systemInstruction.parts[0].text });
-      }
-      for (const c of payload.contents) {
-        const role = c.role === 'model' ? 'assistant' : 'user';
-        const content = c.parts.map((p: any) => p.text || '').join('\\n');
-        messages.push({ role, content });
-      }
-
-      const zhipuResponse = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ZHIPU_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: payload.model,
-          messages,
-          temperature: generationConfig.temperature || 0.2,
-        })
-      });
-
-      const text = await zhipuResponse.text();
-      if (!zhipuResponse.ok) {
-        let message = `GLM API Error: ${zhipuResponse.status} ${zhipuResponse.statusText}`;
-        try {
-          const parsed = JSON.parse(text);
-          message = parsed?.error?.message || message;
-        } catch { }
-        return res.status(zhipuResponse.status).json({ error: message });
-      }
-
-      try {
-        const data = JSON.parse(text);
-        // Translate back to Gemini format for the client
-        const geminiFormat = {
-          candidates: [
-            {
-              content: {
-                parts: [{ text: data.choices[0].message.content }],
-                role: 'model'
-              },
-              finishReason: data.choices[0].finish_reason === 'stop' ? 'STOP' : (data.choices[0].finish_reason || 'STOP')
-            }
-          ]
-        };
-        return res.status(200).json(geminiFormat);
-      } catch {
-        return res.status(502).json({ error: 'GLM returned an invalid response.' });
-      }
-    }
 
     const response = await fetch(getGeminiUrl(payload.model, apiKey), {
       method: 'POST',

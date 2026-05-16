@@ -1,6 +1,12 @@
 
 import { AppLanguage, SkillLevel } from "../types";
 import { searchLRCLIB, searchSongDatabase, normalizeSongSearchText } from "./songDatabaseService";
+import {
+  debugSongLookup,
+  isDatabaseSongStructurallyComplete,
+  mapDatabaseSongToExistingGeminiFormat,
+  searchSongDatabase as searchLocalSongDatabase,
+} from "./songDatabaseLookup";
 import { transliterateLyricsForLanguage } from "./indicTransliterationService";
 
 // ─── Model Configuration ──────────────────────────────────────────────
@@ -15,12 +21,26 @@ const isMissingApiKeyError = (error: unknown) => (
 );
 
 const MODELS = {
-  PRO: "gemini-3.1-pro-preview",
+  PRO: "gemini-2.5-pro",
   PRO_FALLBACK: "gemini-2.5-pro",
-  FLASH: "gemini-3-flash-preview",        // Fast identity/search work. Falls back to 2.5 Flash if unavailable.
+  FLASH: "gemini-2.5-flash",        // Fast identity/search work.
   FLASH_FALLBACK: "gemini-2.5-flash",
-  GLM_FLASH: "glm-4-flash",             // Zhipu free fallback
 } as const;
+
+const ENABLE_SONG_DATABASE_LOOKUPS = true;
+
+const isDevelopment = () => {
+  try {
+    return Boolean(import.meta.env?.DEV);
+  } catch {
+    return false;
+  }
+};
+
+const logSongGenDebug = (message: string, details?: Record<string, unknown>) => {
+  if (!isDevelopment()) return;
+  console.log(`[SongGen] ${message}`, details || '');
+};
 
 const LANGUAGE_SCRIPT_HINTS: Record<AppLanguage, string> = {
   English: 'English/Roman script',
@@ -90,7 +110,15 @@ const callGeminiApi = async (model: string, contents: any[], config: any = {}) =
   let response: Response;
 
   try {
-    response = await fetch('/api/gemini', {
+    // When running server-side (no `window`), use an absolute URL to the API proxy so
+    // server-side callers (API routes) can reach the proxy. In browser, keep the
+    // relative path so the request goes through the same origin.
+    const isServer = typeof window === 'undefined';
+    const hostBase = isServer
+      ? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${process.env.PORT || 3000}`)
+      : '';
+
+    response = await fetch(`${hostBase}/api/gemini`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
@@ -148,14 +176,16 @@ const shouldFallbackModel = (error: unknown) => {
 
 const callGeminiApiWithFallback = async (model: string, contents: any[], config: any = {}) => {
   const modelChain = model === MODELS.PRO
-    ? [MODELS.PRO, MODELS.PRO_FALLBACK, MODELS.GLM_FLASH]
+    ? [MODELS.PRO, MODELS.PRO_FALLBACK]
     : model === MODELS.FLASH
-      ? [MODELS.FLASH, MODELS.FLASH_FALLBACK, MODELS.GLM_FLASH]
+      ? [MODELS.FLASH, MODELS.FLASH_FALLBACK]
       : [model];
+  const uniqueModelChain = Array.from(new Set(modelChain));
   let lastError: unknown;
 
-  for (const candidateModel of modelChain) {
+  for (const candidateModel of uniqueModelChain) {
     try {
+      logSongGenDebug('Calling AI model', { model: candidateModel });
       return await callGeminiApi(candidateModel, contents, config);
     } catch (error) {
       lastError = error;
@@ -389,6 +419,63 @@ const hasChordedContent = (value: unknown) => (
   value.trim().length > 0 &&
   /\[[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?\d*(?:\/[A-G](?:#|b)?)?\]/.test(value)
 );
+
+const countContentLyricLines = (value: unknown) => (
+  typeof value === 'string'
+    ? value
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('###')).length
+    : 0
+);
+
+const isValidGeneratedResult = (result: any, minimumLines = 1) => (
+  !!result &&
+  typeof result === 'object' &&
+  typeof result.title === 'string' &&
+  result.title.trim().length > 0 &&
+  typeof result.content === 'string' &&
+  result.content.trim().length > 0 &&
+  hasChordedContent(result.content) &&
+  countContentLyricLines(result.content) >= minimumLines
+);
+
+const normalizeGeneratedResult = (
+  result: any,
+  defaults: {
+    title?: string;
+    artist?: string;
+    language: AppLanguage;
+    skillLevel: SkillLevel;
+    source: 'database' | 'ai' | 'cache' | 'database-fallback';
+    minimumLines?: number;
+  }
+) => {
+  const data = normalizeContentField({ ...(result || {}) });
+  data.title = data.title || defaults.title || 'Untitled Song';
+  data.artist = data.artist || defaults.artist || 'Unknown';
+  data.language = defaults.language;
+  data.difficulty = data.difficulty || defaults.skillLevel;
+  data.skillLevel = data.skillLevel || data.difficulty || defaults.skillLevel;
+  data.practiceTips = Array.isArray(data.practiceTips) ? data.practiceTips : [];
+  data.chordSimplifications = Array.isArray(data.chordSimplifications) ? data.chordSimplifications : [];
+  data.recommendedKey = data.recommendedKey || data.easierKey || data.key || '';
+  data.languageFallbackReason = data.languageFallbackReason || '';
+  data.source = data.source || defaults.source;
+
+  if (!isValidGeneratedResult(data, defaults.minimumLines || 1)) {
+    throw new Error('Generated result was empty or missing playable chorded content.');
+  }
+
+  logSongGenDebug('Normalized generation result', {
+    source: data.source,
+    title: data.title,
+    contentLength: data.content.length,
+    lyricLines: countContentLyricLines(data.content),
+  });
+
+  return data;
+};
 
 const sectionTitleForLine = (line: string) => {
   const normalized = line.toLowerCase();
@@ -665,47 +752,67 @@ ${lyrics}`;
   }
 };
 
-const buildRecoverableSongWorkspace = (
-  query: string,
-  language: AppLanguage,
-  practiceSkill: SkillLevel,
-  identity?: SongIdentityResolution | null
-) => {
-  const displayTitle = identity?.title && identity.title !== query ? identity.title : query.trim();
-  const displayArtist = identity?.artist && identity.artist !== 'Unknown' ? identity.artist : 'Unknown';
-
-  return {
-    title: displayTitle || 'Untitled Song',
-    artist: displayArtist,
-    key: 'G Major',
-    recommendedKey: 'G Major',
-    capo: 0,
-    strummingPattern: practiceSkill === 'Beginner' ? 'D-DU-UDU' : 'D-D-U-U-D-U',
-    difficulty: practiceSkill,
-    skillLevel: practiceSkill,
-    practiceTips: [
-      'Paste lyrics into the editor to generate a chorded version.',
-      'Add the artist name to narrow the search when a title has multiple matches.'
-    ],
-    chordSimplifications: [],
-    karaokeUrl: '',
-    language,
-    languageFallbackReason: '',
-    duration: 0,
-    source: 'recoverable-search',
-    content: ''
-  };
-};
-
 export const generateSongFromTitle = async (query: string, language: AppLanguage = 'English', skillLevel: SkillLevel = 'Intermediate'): Promise<any> => {
   const practiceSkill = normalizePracticeSkill(skillLevel);
+  logSongGenDebug('Generation started', {
+    queryLength: query.length,
+    language,
+    skillLevel: practiceSkill,
+  });
   
   if (isLikelyUserProvidedLyrics(query)) {
     const arrangement = await buildUserProvidedLyricsArrangement(query, language, practiceSkill);
     return arrangement;
   }
-  // STEP 1: Try database first (LRCLIB) — instant, no AI cost
   const mashupMode = isMashupRequest(query);
+  if (ENABLE_SONG_DATABASE_LOOKUPS && !mashupMode) {
+    try {
+      const databaseMatch = searchLocalSongDatabase(stripGenerationDirectives(query));
+      const completeDbRecord = !!databaseMatch.match && isDatabaseSongStructurallyComplete(databaseMatch.match);
+      logSongGenDebug('Bundled database lookup finished', {
+        matched: databaseMatch.found,
+        complete: completeDbRecord,
+        confidence: databaseMatch.confidence,
+        reason: databaseMatch.reason,
+      });
+
+      if (databaseMatch.found && databaseMatch.match && completeDbRecord) {
+        const mapped = mapDatabaseSongToExistingGeminiFormat(
+          databaseMatch.match,
+          databaseMatch.confidence,
+          language,
+          practiceSkill
+        );
+        const normalized = normalizeGeneratedResult(mapped, {
+          language,
+          skillLevel: practiceSkill,
+          source: 'database',
+          minimumLines: 8,
+        });
+        debugSongLookup({
+          query,
+          matched: true,
+          title: databaseMatch.match.title,
+          confidence: databaseMatch.confidence,
+          source: 'database',
+        });
+        return normalized;
+      }
+
+      debugSongLookup({
+        query,
+        matched: false,
+        confidence: databaseMatch.confidence,
+        source: 'gemini',
+      });
+    } catch (error) {
+      logSongGenDebug('Bundled database lookup failed safely; falling back to AI', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      debugSongLookup({ query, matched: false, source: 'gemini' });
+    }
+  }
+  // STEP 1: Try database first (LRCLIB) - instant, no AI cost
   const verifiedLookup = mashupMode
     ? { dbResult: null, identity: null as SongIdentityResolution | null }
     : await findVerifiedLyrics(query, language);
@@ -951,24 +1058,17 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
       throw new Error(parsed.reason || 'I could not confidently identify that song.');
     }
     
-    parsed = normalizeContentField(parsed);
-
-    parsed.source = 'ai';
-    parsed.language = language;
-    parsed.difficulty = parsed.difficulty || practiceSkill;
-    parsed.practiceTips = Array.isArray(parsed.practiceTips) ? parsed.practiceTips : [];
-    parsed.chordSimplifications = Array.isArray(parsed.chordSimplifications) ? parsed.chordSimplifications : [];
-    parsed.recommendedKey = parsed.recommendedKey || parsed.key || '';
-    parsed.languageFallbackReason = parsed.languageFallbackReason || '';
+    parsed = normalizeGeneratedResult(parsed, {
+      language,
+      skillLevel: practiceSkill,
+      source: 'ai',
+      minimumLines: 8,
+    });
     return parsed;
   } catch (error) {
     console.error("Song Generation Error:", error);
-    return buildRecoverableSongWorkspace(
-      query,
-      language,
-      practiceSkill,
-      verifiedIdentity
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(message || 'AI generation failed before returning usable content.');
   }
 };
 

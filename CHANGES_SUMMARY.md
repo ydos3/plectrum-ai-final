@@ -146,12 +146,12 @@ import { mapAcousticDbSongToApiResponse, validateAcousticSongForDisplay } from "
 ### 2️⃣ `/.env.local`
 **Before:**
 ```
-GEMINI_API_KEY=AIzaSyAEOOIi_aBdkksdqYcLZNle3wikaJNJK1U
+GEMINI_API_KEY=your_server_side_gemini_key_here
 ```
 
 **After:**
 ```
-GEMINI_API_KEY=AIzaSyAEOOIi_aBdkksdqYcLZNle3wikaJNJK1U
+GEMINI_API_KEY=your_server_side_gemini_key_here
 
 # Private Song Database Configuration
 PRIVATE_SONG_DB_ENABLED=true

@@ -196,7 +196,19 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
     };
 
     const handleApplyAiResult = (data: any, fromCache: boolean = false) => {
-        if (data) {
+        if (import.meta.env.DEV) {
+            console.log('[SongEditor] AI payload received', {
+                keys: data && typeof data === 'object' ? Object.keys(data) : [],
+                source: data?.source || (fromCache ? 'cache' : 'unknown'),
+                contentLength: typeof data?.content === 'string' ? data.content.length : 0,
+            });
+        }
+
+        const hasPlayableContent = typeof data?.content === 'string'
+            && data.content.trim().length > 0
+            && /\[[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?\d*(?:\/[A-G](?:#|b)?)?\]/.test(data.content);
+
+        if (data && hasPlayableContent) {
             // Data received successfully
 
 
@@ -225,7 +237,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
                 setMagicInput('');
             }, 600);
         } else {
-            alert("AI generation failed to find this song. Please try a different title or check spelling.");
+            alert("AI generation did not return a usable chord chart. Please try another title, add the artist name, or check the server AI key.");
             setIsAiProcessing(false);
         }
     };
@@ -274,6 +286,22 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
         }
     };
 
+    const getFriendlyGenerationError = (error: any) => {
+        const message = String(error?.message || error || '').toLowerCase();
+        if (
+            message.includes('api key') ||
+            message.includes('reported as leaked') ||
+            message.includes('permission') ||
+            message.includes('403')
+        ) {
+            return 'AI generation is not available because the server AI key needs to be replaced.';
+        }
+        if (message.includes('not found') || message.includes('could not confidently identify')) {
+            return 'I could not confidently identify that song. Try adding the artist name or a few lyric lines.';
+        }
+        return 'AI generation failed before returning a usable chord chart. Please try again.';
+    };
+
     const runQuickPrompt = async (prompt: string, forceMashup: boolean = false) => {
         if (!prompt.trim()) return;
 
@@ -292,7 +320,8 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             songData = await generateSongFromTitle(finalPrompt, selectedLanguage as AppLanguage, practiceSkillLevel);
             handleApplyAiResult(songData);
         } catch (error: any) {
-            alert(`AI Generation Failed:\n${error?.message || error}`);
+            if (import.meta.env.DEV) console.warn('[SongEditor] AI generation failed', error);
+            alert(`AI Generation Failed:\n${getFriendlyGenerationError(error)}`);
             setIsAiProcessing(false);
         }
     };
@@ -319,7 +348,8 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             songData = await generateSongFromTitle(query, selectedLanguage as AppLanguage, practiceSkillLevel);
             handleApplyAiResult(songData);
         } catch (error: any) {
-            alert(`Mashup Generation Failed:\n${error?.message || error}`);
+            if (import.meta.env.DEV) console.warn('[SongEditor] Mashup generation failed', error);
+            alert(`Mashup Generation Failed:\n${getFriendlyGenerationError(error)}`);
             setIsAiProcessing(false);
         }
     };
