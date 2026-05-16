@@ -8,6 +8,7 @@ import {
   searchSongDatabase as searchLocalSongDatabase,
 } from "./songDatabaseLookup";
 import { transliterateLyricsForLanguage } from "./indicTransliterationService";
+import { quickValidateAcousticDatabaseSong, SongQualityValidation, validateAcousticDatabaseSong, validateFrontendSongResult } from "./songQualityValidator";
 
 // ─── Model Configuration ──────────────────────────────────────────────
 // Pro handles high-value generation and vision. Flash handles lightweight UX paths.
@@ -28,6 +29,11 @@ const MODELS = {
 } as const;
 
 const ENABLE_SONG_DATABASE_LOOKUPS = true;
+const REPAIRED_CACHE_KEY = 'plectrum_repaired_song_cache_v1';
+const NORMALIZED_SONG_CACHE_KEY = 'plectrum_normalized_song_cache_v1';
+const REPAIRED_CACHE_VERSION = 1;
+const generationMemoryCache = new Map<string, any>();
+const pendingGenerationRequests = new Map<string, Promise<any>>();
 
 const isDevelopment = () => {
   try {
@@ -447,8 +453,9 @@ const normalizeGeneratedResult = (
     artist?: string;
     language: AppLanguage;
     skillLevel: SkillLevel;
-    source: 'database' | 'ai' | 'cache' | 'database-fallback';
+    source: 'database' | 'database_repaired_with_gemini' | 'gemini_fallback' | 'ai' | 'cache' | 'database-fallback';
     minimumLines?: number;
+    validation?: SongQualityValidation;
   }
 ) => {
   const data = normalizeContentField({ ...(result || {}) });
@@ -462,6 +469,16 @@ const normalizeGeneratedResult = (
   data.recommendedKey = data.recommendedKey || data.easierKey || data.key || '';
   data.languageFallbackReason = data.languageFallbackReason || '';
   data.source = data.source || defaults.source;
+  if (defaults.validation) {
+    data.qualityScore = defaults.validation.qualityScore;
+    data.validationIssues = defaults.validation.issues;
+    data.metadata = {
+      ...(data.metadata || {}),
+      qualityScore: defaults.validation.qualityScore,
+      validationIssues: defaults.validation.issues,
+      recommendedAction: defaults.validation.recommendedAction,
+    };
+  }
 
   if (!isValidGeneratedResult(data, defaults.minimumLines || 1)) {
     throw new Error('Generated result was empty or missing playable chorded content.');
@@ -564,6 +581,112 @@ const hasHighConfidenceIdentity = (identity?: SongIdentityResolution | null) => 
 const identityLabel = (identity: SongIdentityResolution) => (
   `${identity.title || ''} ${identity.artist || ''}`.trim()
 );
+
+const cacheKeyForRepair = (query: string, language: AppLanguage, skillLevel: SkillLevel) => (
+  `${REPAIRED_CACHE_VERSION}:${language}:${skillLevel}:${normalizeSongSearchText(query)}`
+);
+
+const cacheKeyForGeneration = (query: string, language: AppLanguage, skillLevel: SkillLevel) => (
+  `${REPAIRED_CACHE_VERSION}:${language}:${skillLevel}:${normalizeSongSearchText(stripGenerationDirectives(query))}`
+);
+
+const devTimingStart = (label: string) => {
+  if (!isDevelopment()) return 0;
+  return performance.now();
+};
+
+const devTimingEnd = (label: string, start: number, details?: Record<string, unknown>) => {
+  if (!isDevelopment() || !start) return;
+  console.log(`[SongGenTiming] ${label}: ${Math.round(performance.now() - start)}ms`, details || '');
+};
+
+const readNormalizedSongCache = (cacheKey: string) => {
+  if (generationMemoryCache.has(cacheKey)) {
+    logSongGenDebug('CACHE_HIT', { cache: 'memory', cacheKey });
+    return { ...generationMemoryCache.get(cacheKey), source: 'cache' };
+  }
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const cache = JSON.parse(localStorage.getItem(NORMALIZED_SONG_CACHE_KEY) || '{}');
+    const cached = cache[cacheKey];
+    if (!cached) return null;
+    generationMemoryCache.set(cacheKey, cached);
+    logSongGenDebug('CACHE_HIT', { cache: 'localStorage', cacheKey });
+    return { ...cached, source: 'cache' };
+  } catch {
+    return null;
+  }
+};
+
+const writeNormalizedSongCache = (cacheKey: string, result: any) => {
+  if (!result?.content || !result?.title) return;
+  if (!['database', 'database_repaired_with_gemini', 'gemini_fallback', 'database-fallback'].includes(String(result.source))) return;
+  const cacheable = {
+    ...result,
+    metadata: {
+      ...(result.metadata || {}),
+      cacheVersion: REPAIRED_CACHE_VERSION,
+      cachedAt: Date.now(),
+    },
+  };
+  generationMemoryCache.set(cacheKey, cacheable);
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const cache = JSON.parse(localStorage.getItem(NORMALIZED_SONG_CACHE_KEY) || '{}');
+    cache[cacheKey] = cacheable;
+    const entries = Object.entries(cache).slice(-80);
+    localStorage.setItem(NORMALIZED_SONG_CACHE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // Cache is optional.
+  }
+};
+
+const readRepairedSongCache = (query: string, language: AppLanguage, skillLevel: SkillLevel) => {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const cache = JSON.parse(localStorage.getItem(REPAIRED_CACHE_KEY) || '{}');
+    return cache[cacheKeyForRepair(query, language, skillLevel)] || null;
+  } catch {
+    return null;
+  }
+};
+
+const writeRepairedSongCache = (query: string, language: AppLanguage, skillLevel: SkillLevel, result: any) => {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const cache = JSON.parse(localStorage.getItem(REPAIRED_CACHE_KEY) || '{}');
+    cache[cacheKeyForRepair(query, language, skillLevel)] = {
+      ...result,
+      metadata: {
+        ...(result.metadata || {}),
+        cacheVersion: REPAIRED_CACHE_VERSION,
+        cachedAt: Date.now(),
+      },
+    };
+    const entries = Object.entries(cache).slice(-40);
+    localStorage.setItem(REPAIRED_CACHE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // Cache is a performance hint only.
+  }
+};
+
+const getRequestedLyricTransform = (query: string, language: AppLanguage) => {
+  const normalized = normalizeSongSearchText(query);
+  const wantsMeaningTranslation = /\btranslate|meaning|meaning in|hindi meaning|into hindi|in hindi\b/i.test(query) &&
+    !/\btransliterate|transcription|roman|hinglish|script\b/i.test(query);
+  const wantsTransliteration = /\btransliterate|transcription|transcribe|romanize|romanise|hinglish|english script|roman script|hindi script\b/i.test(query);
+
+  if (wantsMeaningTranslation) {
+    return `The user is asking for meaning translation. If the full lyrics are not user-provided, do not invent or reproduce complete copyrighted lyrics. Prefer a concise Hindi/Hinglish meaning summary, and if lyrics are provided by the user, translate only that provided text. Still return a nonblank practice object with clean sections and chords where possible.`;
+  }
+  if (wantsTransliteration || language !== 'English') {
+    return `The user is asking for transliteration/transcription. Preserve sung words phonetically, convert script as requested, and do not translate meaning unless explicitly requested.`;
+  }
+  if (normalized.includes('format') || normalized.includes('karaoke') || normalized.includes('teleprompter')) {
+    return `The user likely wants formatting for karaoke/teleprompter. Preserve provided text, clean line breaks, add sections, and add playable chords where possible.`;
+  }
+  return '';
+};
 
 const sameIdentity = (actual: any, expected?: SongIdentityResolution | null) => {
   if (!expected?.title || !expected.artist) return true;
@@ -752,8 +875,118 @@ ${lyrics}`;
   }
 };
 
-export const generateSongFromTitle = async (query: string, language: AppLanguage = 'English', skillLevel: SkillLevel = 'Intermediate'): Promise<any> => {
+const repairDatabaseResultWithGemini = async (
+  query: string,
+  databaseResult: any,
+  validation: SongQualityValidation,
+  language: AppLanguage,
+  practiceSkill: SkillLevel,
+  sourceLabel: 'bundled_database' | 'lrclib'
+) => {
+  const cached = readRepairedSongCache(`${sourceLabel}:${query}:${databaseResult?.title || ''}:${databaseResult?.artist || ''}`, language, practiceSkill);
+  if (cached) {
+    const cachedValidation = validateFrontendSongResult(cached, { language, expectChords: true, minimumLines: 8 });
+    if (cachedValidation.recommendedAction === 'use_database') {
+      return normalizeGeneratedResult(cached, {
+        language,
+        skillLevel: practiceSkill,
+        source: 'cache',
+        minimumLines: 8,
+        validation: cachedValidation,
+      });
+    }
+  }
+
+  const transformInstruction = getRequestedLyricTransform(query, language);
+  const prompt = `You are repairing a database-backed guitar/karaoke song result for PlectrumAI.
+
+USER REQUEST:
+${query}
+
+DATABASE SOURCE:
+${sourceLabel}
+
+VALIDATION ISSUES:
+${validation.issues.length ? validation.issues.map(issue => `- ${issue}`).join('\n') : '- none'}
+
+QUALITY SCORE:
+${validation.qualityScore}/100
+
+TARGET LANGUAGE/SCRIPT:
+${language}
+
+TARGET SKILL LEVEL:
+${practiceSkill}
+
+${transformInstruction}
+
+DATABASE RESULT TO REPAIR:
+${JSON.stringify(databaseResult, null, 2)}
+
+REPAIR RULES:
+- Preserve correct title, artist, metadata, known lyrics, chord names, and timing data when they are usable.
+- Remove obvious scraping/generation repetition, duplicate sections, empty karaoke lines, and malformed section labels.
+- Add or improve [chord] markers only when musically confident; otherwise use a simple playable educational progression.
+- Use "### [Section]" headers and one lyric line per line.
+- Do not randomly rewrite the song if the database result is mostly good.
+- Do not hallucinate fake full copyrighted lyrics if the database did not provide them. If lyrics are unavailable, return a graceful short practice shell and explain in practiceTips.
+- Make the result teleprompter/karaoke compatible and nonblank.
+- Return strict JSON only in this schema:
+{
+  "found": true,
+  "title": "Exact Song Title",
+  "artist": "Exact Artist Name",
+  "key": "e.g. G Major",
+  "recommendedKey": "e.g. G Major",
+  "capo": 0,
+  "strummingPattern": "D-DU-UDU",
+  "difficulty": "${practiceSkill}",
+  "skillLevel": "${practiceSkill}",
+  "practiceTips": ["short, practical tip"],
+  "chordSimplifications": [{"from":"F","to":"Fmaj7","reason":"easier shape"}],
+  "karaokeUrl": "",
+  "language": "${language}",
+  "languageFallbackReason": "",
+  "duration": 240,
+  "content": "### [Verse 1]\\n[G]line..."
+}`;
+
+  const responseText = await retryWithBackoff(async () => (
+    await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
+      responseMimeType: 'application/json',
+      temperature: 0.12,
+      maxOutputTokens: 8192,
+    })
+  ), 2, 1200);
+
+  const parsed = normalizeContentField(parseGeminiJson(responseText));
+  parsed.source = 'database_repaired_with_gemini';
+  parsed.metadata = {
+    ...(parsed.metadata || {}),
+    repairedFrom: sourceLabel,
+    originalQualityScore: validation.qualityScore,
+    originalValidationIssues: validation.issues,
+  };
+
+  const repairedValidation = validateFrontendSongResult(parsed, { language, expectChords: true, minimumLines: 8 });
+  if (repairedValidation.recommendedAction !== 'use_database') {
+    throw new Error(`Gemini repair remained low quality: ${repairedValidation.issues.join('; ') || repairedValidation.qualityScore}`);
+  }
+
+  const normalized = normalizeGeneratedResult(parsed, {
+    language,
+    skillLevel: practiceSkill,
+    source: 'database_repaired_with_gemini',
+    minimumLines: 8,
+    validation: repairedValidation,
+  });
+  writeRepairedSongCache(`${sourceLabel}:${query}:${databaseResult?.title || ''}:${databaseResult?.artist || ''}`, language, practiceSkill, normalized);
+  return normalized;
+};
+
+const generateSongFromTitleInternal = async (query: string, language: AppLanguage = 'English', skillLevel: SkillLevel = 'Intermediate'): Promise<any> => {
   const practiceSkill = normalizePracticeSkill(skillLevel);
+  const requestStart = devTimingStart('full_request');
   logSongGenDebug('Generation started', {
     queryLength: query.length,
     language,
@@ -767,16 +1000,23 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
   const mashupMode = isMashupRequest(query);
   if (ENABLE_SONG_DATABASE_LOOKUPS && !mashupMode) {
     try {
-      const databaseMatch = searchLocalSongDatabase(stripGenerationDirectives(query));
-      const completeDbRecord = !!databaseMatch.match && isDatabaseSongStructurallyComplete(databaseMatch.match);
-      logSongGenDebug('Bundled database lookup finished', {
+      const lookupQuery = stripGenerationDirectives(query);
+      const dbSearchStart = devTimingStart('database_search');
+      const databaseMatch = searchLocalSongDatabase(lookupQuery);
+      devTimingEnd('database_search', dbSearchStart, {
         matched: databaseMatch.found,
-        complete: completeDbRecord,
         confidence: databaseMatch.confidence,
         reason: databaseMatch.reason,
       });
+      const quickValidationStart = devTimingStart('quick_validation');
+      const quickValidation = quickValidateAcousticDatabaseSong(databaseMatch.match);
+      devTimingEnd('quick_validation', quickValidationStart, {
+        qualityScore: quickValidation.qualityScore,
+        recommendedAction: quickValidation.recommendedAction,
+      });
 
-      if (databaseMatch.found && databaseMatch.match && completeDbRecord) {
+      if (databaseMatch.found && databaseMatch.match && quickValidation.recommendedAction === 'use_database') {
+        const normalizeStart = devTimingStart('database_normalization');
         const mapped = mapDatabaseSongToExistingGeminiFormat(
           databaseMatch.match,
           databaseMatch.confidence,
@@ -787,7 +1027,17 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
           language,
           skillLevel: practiceSkill,
           source: 'database',
-          minimumLines: 8,
+          minimumLines: 6,
+          validation: quickValidation,
+        });
+        devTimingEnd('database_normalization', normalizeStart, {
+          title: normalized.title,
+          source: normalized.source,
+        });
+        logSongGenDebug('DATABASE_HIT_FAST_PATH', {
+          title: databaseMatch.match.title,
+          confidence: databaseMatch.confidence,
+          qualityScore: quickValidation.qualityScore,
         });
         debugSongLookup({
           query,
@@ -796,7 +1046,93 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
           confidence: databaseMatch.confidence,
           source: 'database',
         });
+        devTimingEnd('full_request', requestStart, { source: 'database' });
         return normalized;
+      }
+
+      const structuralComplete = !!databaseMatch.match && isDatabaseSongStructurallyComplete(databaseMatch.match);
+      const rawValidation = validateAcousticDatabaseSong(databaseMatch.match, { language });
+      logSongGenDebug('Bundled database lookup finished', {
+        matched: databaseMatch.found,
+        complete: structuralComplete,
+        confidence: databaseMatch.confidence,
+        reason: databaseMatch.reason,
+        qualityScore: rawValidation.qualityScore,
+        recommendedAction: rawValidation.recommendedAction,
+      });
+
+      if (databaseMatch.found && databaseMatch.match) {
+        const mapped = mapDatabaseSongToExistingGeminiFormat(
+          databaseMatch.match,
+          databaseMatch.confidence,
+          language,
+          practiceSkill
+        );
+        const mappedValidation = validateFrontendSongResult(mapped, { language, expectChords: true, minimumLines: 10 });
+
+        if (structuralComplete && mappedValidation.recommendedAction === 'use_database' && rawValidation.qualityScore >= 72) {
+          const normalized = normalizeGeneratedResult(mapped, {
+            language,
+            skillLevel: practiceSkill,
+            source: 'database',
+            minimumLines: 8,
+            validation: mappedValidation,
+          });
+          debugSongLookup({
+            query,
+            matched: true,
+            title: databaseMatch.match.title,
+            confidence: databaseMatch.confidence,
+            source: 'database',
+          });
+          return normalized;
+        }
+
+        const combinedValidation: SongQualityValidation = {
+          isUsable: false,
+          qualityScore: Math.min(rawValidation.qualityScore, mappedValidation.qualityScore),
+          issues: Array.from(new Set([...rawValidation.issues, ...mappedValidation.issues])),
+          recommendedAction: Math.min(rawValidation.qualityScore, mappedValidation.qualityScore) >= 45
+            ? 'repair_with_gemini'
+            : 'fallback_to_gemini',
+        };
+
+        if (combinedValidation.recommendedAction === 'repair_with_gemini') {
+          logSongGenDebug('DATABASE_HIT_NEEDS_REPAIR', {
+            title: databaseMatch.match.title,
+            qualityScore: combinedValidation.qualityScore,
+            issues: combinedValidation.issues,
+          });
+          try {
+            const repaired = await repairDatabaseResultWithGemini(
+              query,
+              mapped,
+              combinedValidation,
+              language,
+              practiceSkill,
+              'bundled_database'
+            );
+            debugSongLookup({
+              query,
+              matched: true,
+              title: databaseMatch.match.title,
+              confidence: databaseMatch.confidence,
+              source: 'database',
+            });
+            logSongGenDebug('GEMINI_REPAIR_USED', { title: repaired.title, source: repaired.source });
+            devTimingEnd('full_request', requestStart, { source: repaired.source });
+            return repaired;
+          } catch (repairError) {
+            logSongGenDebug('Bundled database repair failed; continuing to fallback flow', {
+              error: repairError instanceof Error ? repairError.message : String(repairError),
+            });
+          }
+        }
+
+        logSongGenDebug('Bundled database result rejected by quality validator', {
+          title: databaseMatch.match.title,
+          validation: combinedValidation,
+        });
       }
 
       debugSongLookup({
@@ -804,6 +1140,10 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
         matched: false,
         confidence: databaseMatch.confidence,
         source: 'gemini',
+      });
+      logSongGenDebug('DATABASE_MISS_GEMINI_FALLBACK', {
+        confidence: databaseMatch.confidence,
+        reason: databaseMatch.reason,
       });
     } catch (error) {
       logSongGenDebug('Bundled database lookup failed safely; falling back to AI', {
@@ -825,6 +1165,12 @@ export const generateSongFromTitle = async (query: string, language: AppLanguage
     // We have lyrics from DB. Now use Gemini Pro to add accurate chords.
     try {
       const lyricLanguageRule = getLyricLanguageInstruction(language);
+      const transformInstruction = getRequestedLyricTransform(query, language);
+      const rawLyricValidation = validateFrontendSongResult({
+        title: dbResult.title,
+        artist: dbResult.artist,
+        content: dbResult.plainLyrics,
+      }, { language, expectChords: false, minimumLines: 8 });
 
       const chordPrompt = `You are a professional music transcriber with decades of experience.
 
@@ -832,6 +1178,8 @@ TASK: Add accurate guitar chords and a practice-ready arrangement to the followi
 OUTPUT LANGUAGE/SCRIPT: ${language}
 TARGET SKILL LEVEL: ${practiceSkill}
 ${verifiedIdentity ? `CONFIRMED SONG IDENTITY: "${verifiedIdentity.title}" by "${verifiedIdentity.artist}". Use this exact song only.` : ''}
+${transformInstruction ? `USER INTENT: ${transformInstruction}` : ''}
+DATABASE LYRIC QUALITY: ${rawLyricValidation.qualityScore}/100 (${rawLyricValidation.issues.join('; ') || 'no issues'})
 
 STRICT RULES — FOLLOW EXACTLY:
 1. CHORD ACCURACY:
@@ -890,7 +1238,7 @@ ${dbResult.plainLyrics}`;
         throw new Error('Gemini response did not include playable chorded content.');
       }
 
-      return {
+      const candidate = {
         title: dbResult.title,
         artist: dbResult.artist,
         key: chordData.key || '',
@@ -906,8 +1254,21 @@ ${dbResult.plainLyrics}`;
         content: chordData.content,
         duration: dbResult.duration,
         timedLyrics: dbResult.syncedLyrics,
-        source: 'database', // Flag for UI
+        source: 'database_repaired_with_gemini',
       };
+      const validation = validateFrontendSongResult(candidate, { language, expectChords: true, minimumLines: 8 });
+      if (validation.recommendedAction === 'use_database') {
+        const normalizedCandidate = normalizeGeneratedResult(candidate, {
+          language,
+          skillLevel: practiceSkill,
+          source: 'database_repaired_with_gemini',
+          minimumLines: 8,
+          validation,
+        });
+        devTimingEnd('full_request', requestStart, { source: normalizedCandidate.source });
+        return normalizedCandidate;
+      }
+      return await repairDatabaseResultWithGemini(query, candidate, validation, language, practiceSkill, 'lrclib');
     } catch (e) {
       if (isMissingApiKeyError(e)) {
         throw e;
@@ -936,7 +1297,7 @@ ${dbResult.plainLyrics}`;
           throw new Error('Gemini fallback response did not include playable chorded content.');
         }
 
-        return {
+        const compactCandidate = {
           title: dbResult.title,
           artist: dbResult.artist,
           key: fallbackData.key || 'G Major',
@@ -952,15 +1313,30 @@ ${dbResult.plainLyrics}`;
           content: fallbackData.content,
           duration: dbResult.duration,
           timedLyrics: dbResult.syncedLyrics,
-          source: 'database-fallback',
+          source: 'database_repaired_with_gemini',
         };
+        const compactValidation = validateFrontendSongResult(compactCandidate, { language, expectChords: true, minimumLines: 8 });
+        if (compactValidation.recommendedAction !== 'fallback_to_gemini') {
+          const normalizedCompact = normalizeGeneratedResult(compactCandidate, {
+            language,
+            skillLevel: practiceSkill,
+            source: 'database_repaired_with_gemini',
+            minimumLines: 8,
+            validation: compactValidation,
+          });
+          devTimingEnd('full_request', requestStart, { source: normalizedCompact.source });
+          return normalizedCompact;
+        }
+        throw new Error(`Compact Gemini fallback remained low quality: ${compactValidation.issues.join('; ')}`);
       } catch (fallbackError) {
         console.warn('[SongGen] Compact Gemini fallback failed, using deterministic playable draft', fallbackError);
-        return buildPlayableSongDraft(
+        const draft = buildPlayableSongDraft(
           dbResult,
           language,
           practiceSkill
         );
+        devTimingEnd('full_request', requestStart, { source: draft.source });
+        return draft;
       }
     }
   }
@@ -979,12 +1355,14 @@ ${dbResult.plainLyrics}`;
   try {
     const langInstruction = language === 'English' ? "English/Roman" : `${language} (${LANGUAGE_SCRIPT_HINTS[language] || 'selected script'})`;
     const lyricLanguageRule = getLyricLanguageInstruction(language);
+    const transformInstruction = getRequestedLyricTransform(query, language);
     const prompt = `You are a professional music transcriber and guitar teacher with access to the world's largest library of published guitar tabs and sheet music.
 
 USER REQUEST: "${query}"
 TARGET LANGUAGE/SCRIPT: ${langInstruction}
 TARGET SKILL LEVEL: ${practiceSkill}
 ${verifiedIdentity ? `CONFIRMED SONG IDENTITY: "${verifiedIdentity.title}" by "${verifiedIdentity.artist}". Use this exact song only.` : ''}
+${transformInstruction ? `USER INTENT: ${transformInstruction}` : ''}
 
 TASK: Create a practice-ready guitar arrangement for this song.
 
@@ -1061,9 +1439,10 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
     parsed = normalizeGeneratedResult(parsed, {
       language,
       skillLevel: practiceSkill,
-      source: 'ai',
+      source: 'gemini_fallback',
       minimumLines: 8,
     });
+    devTimingEnd('full_request', requestStart, { source: parsed.source });
     return parsed;
   } catch (error) {
     console.error("Song Generation Error:", error);
@@ -1073,6 +1452,35 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
 };
 
 // ─── Complete Song from Lyrics (Gemini Pro) ────────────────────────────
+
+export const generateSongFromTitle = async (
+  query: string,
+  language: AppLanguage = 'English',
+  skillLevel: SkillLevel = 'Intermediate'
+): Promise<any> => {
+  const practiceSkill = normalizePracticeSkill(skillLevel);
+  const cacheKey = cacheKeyForGeneration(query, language, practiceSkill);
+  const cached = readNormalizedSongCache(cacheKey);
+  if (cached) return cached;
+
+  const pending = pendingGenerationRequests.get(cacheKey);
+  if (pending) {
+    logSongGenDebug('CACHE_HIT', { cache: 'pending-promise', cacheKey });
+    return pending;
+  }
+
+  const request = generateSongFromTitleInternal(query, language, practiceSkill)
+    .then(result => {
+      writeNormalizedSongCache(cacheKey, result);
+      return result;
+    })
+    .finally(() => {
+      pendingGenerationRequests.delete(cacheKey);
+    });
+
+  pendingGenerationRequests.set(cacheKey, request);
+  return request;
+};
 
 export const completeSongFromLyrics = async (partialLyrics: string, language: AppLanguage = 'English'): Promise<any> => {
   if (partialLyrics.trim()) {

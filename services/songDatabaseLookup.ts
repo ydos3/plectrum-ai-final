@@ -30,6 +30,16 @@ const NOISE_WORDS = new Set([
 
 let cachedDatabase: AcousticSetlistDatabase | null = null;
 let loadFailed = false;
+let cachedSearchIndex: {
+  byTitle: Map<string, AcousticDbSong>;
+  byCompactTitle: Map<string, AcousticDbSong>;
+  rows: Array<{
+    song: AcousticDbSong;
+    title: string;
+    compactTitle: string;
+    artists: string;
+  }>;
+} | null = null;
 
 const isDevelopment = () => {
   try {
@@ -185,6 +195,26 @@ const getSearchFields = (song: AcousticDbSong) => {
   };
 };
 
+const buildSearchIndex = (songs: AcousticDbSong[]) => {
+  const byTitle = new Map<string, AcousticDbSong>();
+  const byCompactTitle = new Map<string, AcousticDbSong>();
+  const rows = songs.map(song => {
+    const fields = getSearchFields(song);
+    const title = normalizeSongQuery(fields.title);
+    const compactTitle = compact(title);
+    const artists = normalizeSongQuery(fields.artists);
+    if (title && !byTitle.has(title)) byTitle.set(title, song);
+    if (compactTitle && !byCompactTitle.has(compactTitle)) byCompactTitle.set(compactTitle, song);
+    return { song, title, compactTitle, artists };
+  });
+  cachedSearchIndex = { byTitle, byCompactTitle, rows };
+  return cachedSearchIndex;
+};
+
+const getSearchIndex = (db: AcousticSetlistDatabase) => (
+  cachedSearchIndex || buildSearchIndex(db.songs)
+);
+
 const scoreSong = (query: string, song: AcousticDbSong) => {
   const normalizedQuery = normalizeSongQuery(query);
   const queryTokens = uniqueTokens(query);
@@ -295,6 +325,7 @@ export const loadSongDatabase = (): AcousticSetlistDatabase | null => {
       },
       songs: usableSongs as AcousticDbSong[],
     };
+    cachedSearchIndex = null;
 
     return cachedDatabase;
   } catch (error) {
@@ -312,6 +343,43 @@ export const searchSongDatabase = (query: string): SongDatabaseSearchResult => {
   const db = loadSongDatabase();
   if (!db) {
     return { found: false, confidence: 0, reason: 'database-unavailable' };
+  }
+
+  const normalizedQuery = normalizeSongQuery(query);
+  const queryCompact = compact(normalizedQuery);
+  const index = getSearchIndex(db);
+  const exactTitle = index.byTitle.get(normalizedQuery) || index.byCompactTitle.get(queryCompact);
+  if (exactTitle) {
+    return {
+      found: true,
+      confidence: 0.97,
+      match: exactTitle,
+      reason: 'indexed-exact-title',
+      candidates: [{
+        title: exactTitle.title,
+        artist: asStringArray(exactTitle.singers).join(', ') || undefined,
+        confidence: 0.97,
+      }],
+    };
+  }
+
+  const titleContained = index.rows.find(row => (
+    row.compactTitle.length >= 5 &&
+    queryCompact.includes(row.compactTitle) &&
+    (!row.artists || tokenOverlap(uniqueTokens(query), row.artists) > 0 || normalizedQuery.includes(row.title))
+  ));
+  if (titleContained) {
+    return {
+      found: true,
+      confidence: 0.9,
+      match: titleContained.song,
+      reason: 'indexed-title-contained',
+      candidates: [{
+        title: titleContained.song.title,
+        artist: asStringArray(titleContained.song.singers).join(', ') || undefined,
+        confidence: 0.9,
+      }],
+    };
   }
 
   const scored = db.songs

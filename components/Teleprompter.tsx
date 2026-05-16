@@ -121,10 +121,15 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const [handedness, setHandedness] = useState<Handedness>(() => persistedState.current.handedness === 'Left' ? 'Left' : 'Right');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const lineFillRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollTimerRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(0);
   const activeLineIndexRef = useRef<number>(-1);
   const manualScrollHoldUntilRef = useRef(0);
+  const programmaticScrollUntilRef = useRef(0);
+  const autoScrollCurrentRef = useRef<number | null>(null);
+  const lineCenterCacheRef = useRef<Map<number, number>>(new Map());
+  const lastClockStateSyncRef = useRef(0);
   const videoAnchorRef = useRef({ videoTime: 0, lyricTime: 0 });
 
   // KARAOKE/YOUTUBE STATE
@@ -239,6 +244,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   useEffect(() => {
     parseContent();
     lineRefs.current = new Array(parsedLines.current.length).fill(null);
+    lineFillRefs.current = new Array(parsedLines.current.length).fill(null);
+    lineCenterCacheRef.current.clear();
   }, [parseContent]);
 
   // ─── Timed Lyrics Support ──────────────────────────────────────────
@@ -327,10 +334,42 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return null;
   }, []);
 
+  const getCachedCenteredScrollTop = useCallback((index: number) => {
+    if (lineCenterCacheRef.current.has(index)) {
+      return lineCenterCacheRef.current.get(index)!;
+    }
+
+    const target = getCenteredScrollTop(index);
+    if (target !== null) {
+      lineCenterCacheRef.current.set(index, target);
+    }
+    return target;
+  }, [getCenteredScrollTop]);
+
+  useEffect(() => {
+    lineCenterCacheRef.current.clear();
+    autoScrollCurrentRef.current = null;
+  }, [fontSize, karaokeEnabled, splitRatio, song.content]);
+
+  useEffect(() => {
+    const clearLayoutCache = () => {
+      lineCenterCacheRef.current.clear();
+      autoScrollCurrentRef.current = scrollContainerRef.current?.scrollTop ?? null;
+    };
+    window.addEventListener('resize', clearLayoutCache);
+    window.addEventListener('orientationchange', clearLayoutCache);
+    return () => {
+      window.removeEventListener('resize', clearLayoutCache);
+      window.removeEventListener('orientationchange', clearLayoutCache);
+    };
+  }, []);
+
   const scrollToLine = useCallback((index: number, behavior: ScrollBehavior = 'smooth') => {
     const targetScroll = getCenteredScrollTop(index);
     if (targetScroll !== null && scrollContainerRef.current) {
       const container = scrollContainerRef.current;
+      programmaticScrollUntilRef.current = Date.now() + 300;
+      autoScrollCurrentRef.current = targetScroll;
       container.scrollTo({
         top: targetScroll,
         behavior
@@ -338,17 +377,82 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     }
   }, [getCenteredScrollTop]);
 
-  const scrollToProgress = useCallback((time: number) => {
+  const getAutoScrollTarget = useCallback((time: number, timings?: number[], activeIdx?: number) => {
     const container = scrollContainerRef.current;
-    if (!container) return;
-    if (Date.now() < manualScrollHoldUntilRef.current) return;
+    if (!container) return null;
+
+    if (timings && typeof activeIdx === 'number' && activeIdx >= 0) {
+      const currentTarget = getCachedCenteredScrollTop(activeIdx);
+      if (currentTarget !== null) {
+        const lineStart = timings[activeIdx] >= 0 ? timings[activeIdx] : time;
+        let nextIdx = -1;
+        for (let i = activeIdx + 1; i < timings.length; i++) {
+          if (timings[i] >= 0) {
+            nextIdx = i;
+            break;
+          }
+        }
+
+        if (nextIdx >= 0) {
+          const nextTarget = getCachedCenteredScrollTop(nextIdx);
+          const lineEnd = timings[nextIdx];
+          const lineDuration = Math.max(0.25, lineEnd - lineStart);
+          const rawProgress = Math.min(1, Math.max(0, (time - lineStart) / lineDuration));
+          if (nextTarget !== null) {
+            return currentTarget + ((nextTarget - currentTarget) * rawProgress);
+          }
+        }
+
+        return currentTarget;
+      }
+    }
 
     const scrollableDistance = Math.max(0, container.scrollHeight - container.clientHeight);
-    if (scrollableDistance <= 0) return;
+    if (scrollableDistance <= 0) return null;
 
     const progress = Math.min(1, Math.max(0, time / Math.max(1, actualDuration)));
-    container.scrollTop = scrollableDistance * progress;
-  }, [actualDuration]);
+    return scrollableDistance * progress;
+  }, [actualDuration, getCachedCenteredScrollTop]);
+
+  const easeScrollTo = useCallback((target: number, immediate = false) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+    const clampedTarget = Math.min(maxScroll, Math.max(0, target));
+    const current = autoScrollCurrentRef.current ?? container.scrollTop;
+    const next = immediate ? clampedTarget : current + ((clampedTarget - current) * 0.22);
+    const settled = Math.abs(clampedTarget - next) < 0.5 ? clampedTarget : next;
+
+    programmaticScrollUntilRef.current = Date.now() + 120;
+    container.scrollTop = settled;
+    autoScrollCurrentRef.current = settled;
+  }, []);
+
+  const scrollToProgress = useCallback((time: number, timings?: number[], activeIdx?: number, immediate = false) => {
+    if (Date.now() < manualScrollHoldUntilRef.current) return;
+    const target = getAutoScrollTarget(time, timings, activeIdx);
+    if (target !== null) easeScrollTo(target, immediate);
+  }, [easeScrollTo, getAutoScrollTarget]);
+
+  const updateKaraokeFill = useCallback((time: number, timings: number[], activeIdx: number) => {
+    if (!karaokeEnabled || activeIdx < 0 || timings[activeIdx] < 0) return;
+
+    const activeEl = lineFillRefs.current[activeIdx];
+    if (!activeEl) return;
+
+    let lineEnd = timings[activeIdx] + 3;
+    for (let i = activeIdx + 1; i < timings.length; i++) {
+      if (timings[i] >= 0) {
+        lineEnd = timings[i];
+        break;
+      }
+    }
+
+    const lineDuration = Math.max(0.25, lineEnd - timings[activeIdx]);
+    const fillPercentage = Math.min(100, Math.max(0, ((time - timings[activeIdx]) / lineDuration) * 100));
+    activeEl.style.setProperty('--karaoke-fill', `${fillPercentage}%`);
+  }, [karaokeEnabled]);
 
   const getActiveLineForTime = useCallback((time: number, timings: number[]) => {
     let activeIdx = -1;
@@ -367,11 +471,18 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   // karaoke playback keeps running.
   const MANUAL_SCROLL_HOLD_MS = 3000;
 
+  const holdAutoScrollForManualInput = useCallback(() => {
+    if (Date.now() < programmaticScrollUntilRef.current) return;
+    const container = scrollContainerRef.current;
+    manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
+    autoScrollCurrentRef.current = container?.scrollTop ?? null;
+  }, []);
+
   const syncClockToManualScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
+    holdAutoScrollForManualInput();
 
     // In karaoke mode, the video player is the source of truth for time.
     // Manual scrolling should just pause auto-scroll (done above) so the user can read.
@@ -390,7 +501,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       activeLineIndexRef.current = newActiveIdx;
       setActiveLineIndex(newActiveIdx);
     }
-  }, [actualDuration, getActiveLineForTime, getLineTimings, karaokeEnabled]);
+  }, [actualDuration, getActiveLineForTime, getLineTimings, holdAutoScrollForManualInput, karaokeEnabled]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -414,14 +525,23 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         : currentTimeRef.current + (deltaTime * playbackSpeed);
       const clampedTime = Math.min(actualDuration, Math.max(0, nextTime));
       currentTimeRef.current = clampedTime;
-      setCurrentTime(clampedTime);
 
       const newActiveIdx = getActiveLineForTime(clampedTime, timings);
       if (newActiveIdx >= 0 && newActiveIdx !== activeLineIndexRef.current) {
+        const previousLine = activeLineIndexRef.current;
+        if (previousLine >= 0) {
+          lineFillRefs.current[previousLine]?.style.setProperty('--karaoke-fill', '100%');
+        }
         activeLineIndexRef.current = newActiveIdx;
         setActiveLineIndex(newActiveIdx);
       }
-      scrollToProgress(clampedTime);
+      updateKaraokeFill(clampedTime, timings, activeLineIndexRef.current);
+      scrollToProgress(clampedTime, timings, activeLineIndexRef.current);
+
+      if (frameTime - lastClockStateSyncRef.current > 250 || clampedTime >= actualDuration) {
+        lastClockStateSyncRef.current = frameTime;
+        setCurrentTime(clampedTime);
+      }
 
       if (clampedTime < actualDuration) {
         scrollTimerRef.current = requestAnimationFrame(scrollLoop);
@@ -435,7 +555,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
     };
-  }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, syncOffset, getLineTimings, getActiveLineForTime, scrollToProgress]);
+  }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, syncOffset, getLineTimings, getActiveLineForTime, scrollToProgress, updateKaraokeFill]);
 
   // Keep the lyric clock aligned to YouTube while paused. During karaoke playback, the main loop follows YouTube time.
   // Respects manualScrollHoldUntilRef so user scroll is not overridden.
@@ -444,28 +564,47 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
     const timings = getLineTimings();
 
-    const syncInterval = window.setInterval(() => {
+    let rafId: number | null = null;
+    let lastSync = 0;
+
+    const syncWhilePaused = (frameTime: number) => {
+      if (frameTime - lastSync < 120) {
+        rafId = requestAnimationFrame(syncWhilePaused);
+        return;
+      }
+      lastSync = frameTime;
+
       if (playerRef.current?.getCurrentTime) {
         const videoTime = playerRef.current.getCurrentTime() + syncOffset;
         const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
         currentTimeRef.current = clampedTime;
-        setCurrentTime(clampedTime);
         
         const newActiveIdx = getActiveLineForTime(clampedTime, timings);
 
         if (newActiveIdx !== activeLineIndexRef.current && newActiveIdx >= 0) {
+          const previousLine = activeLineIndexRef.current;
+          if (previousLine >= 0 && previousLine < newActiveIdx) {
+            lineFillRefs.current[previousLine]?.style.setProperty('--karaoke-fill', '100%');
+          }
           activeLineIndexRef.current = newActiveIdx;
           setActiveLineIndex(newActiveIdx);
         }
+        updateKaraokeFill(clampedTime, timings, activeLineIndexRef.current);
+        setCurrentTime(clampedTime);
         // Only auto-scroll if the user is not actively scrolling
         if (Date.now() >= manualScrollHoldUntilRef.current) {
-          scrollToProgress(clampedTime);
+          scrollToProgress(clampedTime, timings, activeLineIndexRef.current);
         }
       }
-    }, 80);
+      rafId = requestAnimationFrame(syncWhilePaused);
+    };
 
-    return () => clearInterval(syncInterval);
-  }, [karaokeEnabled, playerReady, isPlaying, syncOffset, actualDuration, getLineTimings, getActiveLineForTime, scrollToProgress]);
+    rafId = requestAnimationFrame(syncWhilePaused);
+
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [karaokeEnabled, playerReady, isPlaying, syncOffset, actualDuration, getLineTimings, getActiveLineForTime, scrollToProgress, updateKaraokeFill]);
 
   // ─── YouTube Setup ─────────────────────────────────────────────────
 
@@ -762,33 +901,40 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
           const isUpcoming = activeLineIndex >= 0 && idx > activeLineIndex;
           const distance = Math.abs(idx - activeLineIndex);
 
-          // Spotify-style: active line is big and bright, neighbors dim slightly but remain very visible
-          const scale = isActive ? 1 : Math.max(0.9, 1 - distance * 0.01);
+          // Keep emphasis on compositor-friendly properties. Changing font size
+          // here causes reflow and makes lyric changes feel blocky.
+          const scale = isActive ? 1.025 : Math.max(0.96, 1 - distance * 0.006);
           const opacity = isActive ? 1 : isPast ?
-            Math.max(0.5, 0.8 - distance * 0.03) :
-            Math.max(0.6, 0.9 - distance * 0.03);
+            Math.max(0.48, 0.82 - distance * 0.025) :
+            Math.max(0.58, 0.9 - distance * 0.025);
 
-          // Karaoke fill for active line
-          let fillPercentage = 0;
+          // Karaoke fill is animated imperatively via --karaoke-fill so playback
+          // does not re-render the entire lyric list every frame.
+          let initialFillPercentage = 0;
           if (isActive && karaokeEnabled && timings[idx] >= 0) {
             const lineStart = timings[idx];
-            // Find next line timing for duration
             let lineEnd = lineStart + 3; // Default 3s per line
             for (let j = idx + 1; j < timings.length; j++) {
               if (timings[j] >= 0) { lineEnd = timings[j]; break; }
             }
-            const lineDuration = lineEnd - lineStart;
-            const elapsed = currentTime - lineStart;
-            fillPercentage = Math.min(100, Math.max(0, (elapsed / lineDuration) * 100));
+            const lineDuration = Math.max(0.25, lineEnd - lineStart);
+            const elapsed = currentTimeRef.current - lineStart;
+            initialFillPercentage = Math.min(100, Math.max(0, (elapsed / lineDuration) * 100));
           }
 
           return (
               <div 
                 key={idx}
                 ref={el => { lineRefs.current[idx] = el; }}
-                className={`w-full py-3 px-4 md:px-6 rounded-2xl transition-all duration-300 ease-out mb-1 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-0 cursor-pointer hover:bg-white/[0.04]
+                className={`w-full py-3 px-4 md:px-6 rounded-2xl transition-[background-color,box-shadow,opacity,transform] duration-700 ease-out mb-1 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-0 cursor-pointer hover:bg-white/[0.04]
                   ${isActive && karaokeEnabled ? 'bg-white/[0.04] shadow-[0_0_40px_rgba(255,255,255,0.03)]' : ''}
                 `}
+                style={{
+                  opacity,
+                  transform: `translate3d(0, 0, 0) scale(${scale})`,
+                  transformOrigin: 'center center',
+                  willChange: 'transform, opacity'
+                }}
                 onClick={() => {
                   const timings = getLineTimings();
                   const lineTime = timings[idx];
@@ -813,17 +959,21 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
               >
                   {/* Lyrics */}
                   <div 
-                     className={`flex-1 font-sans whitespace-pre-wrap leading-relaxed tracking-wide transition-all duration-500 ${
+                     ref={el => { lineFillRefs.current[idx] = el; }}
+                     className={`flex-1 font-sans whitespace-pre-wrap leading-relaxed tracking-wide transition-[color,opacity,filter,text-shadow] duration-700 ease-out ${
                        isActive ? 'font-bold' : 'font-medium'
                      }`}
                      style={{ 
-                         fontSize: `${isActive && karaokeEnabled ? fontSize + 4 : fontSize}px`,
+                         fontSize: `${fontSize}px`,
                          ...(isActive && karaokeEnabled ? {
-                             backgroundImage: `linear-gradient(90deg, #fbbf24 ${fillPercentage}%, rgba(255,255,255,0.9) ${fillPercentage}%)`,
+                             '--karaoke-fill': `${initialFillPercentage}%`,
+                             backgroundImage: `linear-gradient(90deg, #fbbf24 var(--karaoke-fill, 0%), rgba(255,255,255,0.9) var(--karaoke-fill, 0%))`,
                              WebkitBackgroundClip: 'text',
                              WebkitTextFillColor: 'transparent',
                              backgroundClip: 'text',
                              color: 'transparent',
+                             willChange: 'background-image',
+                             textShadow: '0 0 18px rgba(251,191,36,0.12)',
                          } : {
                              color: karaokeEnabled 
                                ? (isActive ? '#ffffff' : isPast ? 'rgba(251,191,36,0.85)' : 'rgba(241,245,249,0.85)')
@@ -973,23 +1123,28 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         style={karaokeEnabled ? { userSelect: isDraggingSplitRef.current ? 'none' : undefined } as React.CSSProperties : undefined}
       >
          <div
-           className={`min-h-0 relative ${karaokeEnabled ? 'border-r border-white/[0.05] order-2 md:order-1' : 'w-full h-full'}`}
-           style={karaokeEnabled ? { flex: '0 0 auto', width: `${splitRatio * 100}%` } as React.CSSProperties : undefined}
+           className={`min-h-0 relative ${karaokeEnabled ? 'teleprompter-lyrics-pane border-b md:border-b-0 md:border-r border-white/[0.05] order-2 md:order-1' : 'w-full h-full'}`}
+           style={karaokeEnabled ? { '--lyrics-pane-width': `${splitRatio * 100}%` } as React.CSSProperties : undefined}
          >
              <div
                ref={scrollContainerRef}
                onWheel={syncClockToManualScroll}
+               onScroll={holdAutoScrollForManualInput}
+               onTouchStart={holdAutoScrollForManualInput}
                onTouchMove={syncClockToManualScroll}
+               onPointerDown={(event) => {
+                 if (!isDraggingSplitRef.current && event.pointerType !== 'mouse') holdAutoScrollForManualInput();
+               }}
                onPointerMove={(event) => {
                  if (event.buttons === 1 && !isDraggingSplitRef.current) syncClockToManualScroll();
                }}
-               className="h-full overflow-y-auto relative custom-scrollbar pb-32"
+               className="h-full overflow-y-auto overscroll-contain relative custom-scrollbar pb-32 touch-pan-y"
              >
-                 <div className="min-h-screen pt-28 pb-28 md:pt-40 md:pb-24 px-3 sm:px-5 md:px-12 lg:px-20 mx-auto relative z-10 max-w-4xl">
+                 <div className="min-h-full pt-24 pb-28 md:pt-40 md:pb-24 px-3 sm:px-5 md:px-12 lg:px-20 mx-auto relative z-10 max-w-4xl">
                      {/* Spacer so first line can center */}
-                     <div className="h-[40vh]"></div>
+                     <div className="h-[34dvh] md:h-[40vh]"></div>
                      {renderStructuredContent()}
-                     <div className="h-[60vh]"></div>
+                     <div className="h-[48dvh] md:h-[60vh]"></div>
                  </div>
              </div>
              {/* Gradient fade overlays */}
@@ -1102,7 +1257,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       </div>
 
       {/* Playback Footer - Now an overlay that appears on hover */}
-      <div className={`absolute bottom-0 left-0 right-0 h-20 md:h-24 border-t flex items-center justify-start md:justify-center gap-2 md:gap-8 z-50 shrink-0 shadow-[0_-5px_30px_rgba(0,0,0,0.3)] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 overflow-x-auto px-2 md:px-0 ${
+      <div className={`absolute bottom-0 left-0 right-0 h-20 md:h-24 pb-safe border-t flex items-center justify-start md:justify-center gap-2 md:gap-8 z-50 shrink-0 shadow-[0_-5px_30px_rgba(0,0,0,0.3)] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 overflow-x-auto px-2 md:px-0 ${
         isAiGenerated ? 'bg-[#1a050f]/90 border-rose-900/20' : 'bg-[#0f172a]/90 border-white/[0.05]'
       }`}>
              <div className="flex items-center gap-1 md:gap-2 px-1.5 md:px-4 border-r border-white/[0.06] pr-2 md:pr-6">

@@ -304,6 +304,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
 
     const runQuickPrompt = async (prompt: string, forceMashup: boolean = false) => {
         if (!prompt.trim()) return;
+        if (isAiProcessing) return;
 
         setIsAiProcessing(true);
         const isBarre = prompt.toLowerCase().includes('barre');
@@ -328,6 +329,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
 
     const handleManualGenerate = async () => {
         if (!magicInput) return;
+        if (isAiProcessing) return;
 
         // MASHUP INTERCEPTOR
         if (magicInput.includes(',') || magicInput.toLowerCase().includes(' vs ')) {
@@ -341,6 +343,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
 
     const handleMashupPrompt = async () => {
         if (!magicInput.trim()) return;
+        if (isAiProcessing) return;
         setIsAiProcessing(true);
         const query = `Mashup of "${title}" and "${magicInput}"`;
         let songData;
@@ -529,13 +532,17 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
                                 onChange={e => { setMagicInput(e.target.value); setShowSuggestionsDropdown(true); }}
                                 onFocus={() => setShowSuggestionsDropdown(true)}
                                 onBlur={() => setTimeout(() => setShowSuggestionsDropdown(false), 200)}
-                                onKeyDown={e => e.key === 'Enter' && handleManualGenerate()}
+                                onKeyDown={e => e.key === 'Enter' && !isAiProcessing && handleManualGenerate()}
                                 placeholder="Type song name (e.g. 'Wonderwall') or lyrics..."
                                 className="w-full bg-[#0a0503] border border-[#5d4037] rounded-full pl-14 pr-32 py-4 text-amber-100 focus:ring-2 focus:ring-amber-500/50 outline-none placeholder-amber-900/40 transition-all font-medium text-lg shadow-inner"
                                 autoComplete="off"
                             />
-                            <button onClick={handleManualGenerate} className="absolute right-2 top-2 bottom-2 px-6 bg-amber-600 hover:bg-amber-500 text-white rounded-full font-bold text-sm transition-colors shadow-lg">
-                                Generate
+                            <button
+                              onClick={handleManualGenerate}
+                              disabled={isAiProcessing}
+                              className="absolute right-2 top-2 bottom-2 px-6 bg-amber-600 hover:bg-amber-500 disabled:bg-amber-900/50 disabled:text-amber-200/50 disabled:cursor-not-allowed text-white rounded-full font-bold text-sm transition-colors shadow-lg"
+                            >
+                                {isAiProcessing ? 'Working' : 'Generate'}
                             </button>
                         </div>
 
