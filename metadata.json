@@ -1,6 +1,6 @@
 {
   "name": "Plectrum.ai",
-  "description": "A comprehensive guitarist's companion app featuring a song library, smart teleprompter with voice tracking, AI-powered tab analysis, and a musical chatbot assistant.",
+  "description": "A private guitar practice studio for song search, chords, teleprompter, tuner, fretboard learning, and studio-style recording.",
   "requestFramePermissions": [
     "camera",
     "microphone"

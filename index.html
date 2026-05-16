@@ -5,6 +5,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Plectrum.ai</title>
+    <meta name="description" content="Plectrum.ai is a private guitar practice studio for song search, chords, teleprompter, tuner, fretboard learning, and studio-style recording." />
+    <meta name="theme-color" content="#451a03" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&family=Great+Vibes&family=JetBrains+Mono:wght@400;700&family=Cinzel:wght@400;700;900&display=swap');
@@ -21,6 +26,14 @@
           repeating-linear-gradient(#5d403755, #5d403755),
           url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.5' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.05'/%3E%3C/svg%3E");
       }
+
+      html {
+        box-sizing: border-box;
+      }
+
+      *, *::before, *::after {
+        box-sizing: inherit;
+      }
       
       .wood-panel {
         background: linear-gradient(135deg, #5d4037 0%, #3e2723 100%);
@@ -29,6 +42,26 @@
           inset 0 0 20px rgba(0,0,0,0.3), 
           0 10px 20px rgba(0,0,0,0.4);
         border: 1px solid #795548;
+      }
+
+      .landing-status-panel {
+        width: 18rem;
+        max-width: calc(100vw - 4rem);
+      }
+
+      .landing-action-panel {
+        width: 18rem;
+        max-width: calc(100vw - 4rem);
+      }
+
+      @media (min-width: 768px) {
+        .landing-status-panel {
+          width: 20rem;
+        }
+
+        .landing-action-panel {
+          width: 32rem;
+        }
       }
 
       .font-display {

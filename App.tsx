@@ -212,8 +212,8 @@ const App: React.FC = () => {
                         {authStep === 'LANDING' && (
                             <>
                                 {/* Environment Widget */}
-                                <div className="relative md:absolute md:top-6 md:right-6 md:z-50 w-full md:w-auto px-6 pt-4 md:p-0 flex justify-end">
-                                    <div className="w-full md:w-64 bg-[#1a0f0a]/80 md:bg-black/30 backdrop-blur-md rounded-2xl border border-amber-900/30 p-3 px-5 shadow-xl flex items-center justify-between gap-6 text-amber-200/80">
+                                <div className="relative md:absolute md:top-6 md:right-6 md:z-50 w-full md:w-auto px-6 pt-4 md:p-0 flex justify-center md:justify-end">
+                                    <div className="landing-status-panel bg-[#1a0f0a]/80 md:bg-black/30 backdrop-blur-md rounded-2xl border border-amber-900/30 p-3 px-5 shadow-xl flex items-center justify-between gap-6 text-amber-200/80">
                                         <div className="flex flex-col items-start">
                                             <div className="flex items-center gap-2 text-[10px] md:text-xs font-bold uppercase tracking-wider text-amber-500">
                                                 <Clock className="w-3 h-3 md:w-3.5 md:h-3.5" /> {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -238,14 +238,15 @@ const App: React.FC = () => {
                                             Plectrum.ai
                                         </h1>
 
-                                        <p className="text-xs md:text-sm text-amber-500 font-bold uppercase tracking-[0.4em] opacity-80 text-center">
-                                            By the guitarist • For the guitarist
+                                        <p className="flex flex-col items-center gap-1 text-xs md:text-sm text-amber-500 font-bold uppercase tracking-[0.34em] opacity-80 text-center">
+                                            <span>By the guitarist</span>
+                                            <span>For the guitarist</span>
                                         </p>
                                     </div>
 
-                                    <div className="w-full max-w-lg text-center space-y-6 md:space-y-8">
-                                        <div className="h-12 md:h-14 flex items-center justify-center">
-                                            <p className="text-amber-100/90 font-cursive text-xl md:text-2xl lg:text-3xl px-4 truncate max-w-full drop-shadow-md opacity-90" key={quoteIndex}>
+                                    <div className="landing-action-panel text-center space-y-6 md:space-y-8">
+                                        <div className="min-h-12 md:min-h-14 flex items-center justify-center">
+                                            <p className="text-amber-100/90 font-cursive text-xl md:text-2xl lg:text-3xl px-4 max-w-full text-center leading-snug drop-shadow-md opacity-90" key={quoteIndex}>
                                                 "{QUOTES[quoteIndex]}"
                                             </p>
                                         </div>
@@ -257,9 +258,6 @@ const App: React.FC = () => {
                                             Enter Studio <ArrowRight className="w-5 h-5 md:w-6 md:h-6" />
                                         </button>
 
-                                        <p className="text-amber-900/60 text-[10px] md:text-xs uppercase tracking-[0.2em] font-bold">
-                                            Acoustic Neural Networks Online
-                                        </p>
                                     </div>
                                 </div>
                             </>
