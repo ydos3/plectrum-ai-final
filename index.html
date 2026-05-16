@@ -4,12 +4,83 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>Plectrum.ai</title>
-    <meta name="description" content="Plectrum.ai is a private guitar practice studio for song search, chords, teleprompter, tuner, fretboard learning, and studio-style recording." />
-    <meta name="theme-color" content="#451a03" />
+
+    <!-- ─── Primary SEO Metadata ───────────────────────────────────────── -->
+    <title>Plectrum — AI Guitar, Chords, Lyrics & Karaoke Practice Studio</title>
+    <meta name="description" content="Plectrum is an AI-powered music practice studio for guitarists and singers. Find chords, lyrics, karaoke practice, teleprompter mode, voice tools, and song learning features in one place." />
+    <meta name="keywords" content="AI guitar app, guitar chords, lyrics and chords, karaoke practice, teleprompter for singers, music practice app, guitar learning, AI music assistant, Plectrum Studio" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://plectrum.studio/" />
+
+    <!-- ─── Google Search Console Verification ─────────────────────────── -->
+    <!-- TODO: Replace PLACEHOLDER with your real Google Search Console verification token.
+         Get it from: https://search.google.com/search-console → Add Property → HTML tag method.
+         You can also set VITE_GOOGLE_SITE_VERIFICATION in .env.local for build-time injection. -->
+
+    <!-- ─── Theme & Branding ───────────────────────────────────────────── -->
+    <meta name="theme-color" content="#0f0a06" />
+    <meta name="application-name" content="Plectrum" />
+    <meta name="apple-mobile-web-app-title" content="Plectrum" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- ─── Favicon & Icons (transparent background, no brown) ─────────── -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="shortcut icon" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" sizes="48x48" href="/icon-48.svg" />
+    <link rel="icon" type="image/svg+xml" sizes="192x192" href="/icon-192.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.svg" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- ─── OpenGraph (Facebook, LinkedIn, Discord, etc.) ──────────────── -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Plectrum" />
+    <meta property="og:title" content="Plectrum — AI Guitar, Chords, Lyrics & Karaoke Practice Studio" />
+    <meta property="og:description" content="AI-powered music practice studio for guitarists and singers. Find chords, lyrics, karaoke, teleprompter, and song learning tools in one place." />
+    <meta property="og:url" content="https://plectrum.studio/" />
+    <meta property="og:image" content="https://plectrum.studio/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- ─── Twitter / X Card ───────────────────────────────────────────── -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Plectrum — AI Guitar, Chords, Lyrics & Karaoke Practice Studio" />
+    <meta name="twitter:description" content="AI-powered music practice studio for guitarists and singers. Chords, lyrics, karaoke, teleprompter & more." />
+    <meta name="twitter:image" content="https://plectrum.studio/og-image.png" />
+
+    <!-- ─── JSON-LD Structured Data ────────────────────────────────────── -->
+    <script type="application/ld+json">
+    [
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Plectrum",
+        "alternateName": "Plectrum Studio",
+        "url": "https://plectrum.studio/",
+        "description": "AI-powered music practice studio for guitarists and singers.",
+        "inLanguage": "en"
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Plectrum",
+        "alternateName": "Plectrum Studio",
+        "url": "https://plectrum.studio/",
+        "description": "AI-powered music practice studio for guitarists and singers. Find chords, lyrics, karaoke practice, teleprompter mode, voice tools, and song learning features in one place.",
+        "applicationCategory": ["MusicApplication", "EducationalApplication"],
+        "operatingSystem": "Web",
+        "browserRequirements": "Requires JavaScript",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "image": "https://plectrum.studio/og-image.png",
+        "screenshot": "https://plectrum.studio/og-image.png"
+      }
+    ]
+    </script>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&family=Great+Vibes&family=JetBrains+Mono:wght@400;700&family=Cinzel:wght@400;700;900&display=swap');

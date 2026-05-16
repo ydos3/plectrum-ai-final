@@ -123,7 +123,6 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             setDurationStr(formatTime(songToEdit.duration));
             setKaraokeUrl(songToEdit.karaokeUrl || '');
             setTimedLyrics(songToEdit.timedLyrics);
-            setLanguageFallbackMessage('');
         }
     }, [songToEdit, initialContent]);
 

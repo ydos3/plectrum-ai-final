@@ -4,7 +4,70 @@ import { getChordFingering } from "./chordService";
 let audioCtx: AudioContext | null = null;
 let masterCompressor: DynamicsCompressorNode | null = null;
 let masterGain: GainNode | null = null;
-const MASTER_OUTPUT_GAIN = 1.35;
+let masterLimiter: WaveShaperNode | null = null;
+let outputCeiling: GainNode | null = null;
+const MASTER_OUTPUT_GAIN = 1.18;
+const OUTPUT_CEILING_GAIN = 0.92;
+const MAX_ACTIVE_VOICES = 36;
+
+type Voice = {
+  sources: AudioScheduledSourceNode[];
+  nodes: AudioNode[];
+  stopAt: number;
+  cleanupTimer: number;
+};
+
+const activeVoices: Voice[] = [];
+
+const cleanupVoice = (voice: Voice) => {
+  window.clearTimeout(voice.cleanupTimer);
+  voice.nodes.forEach(node => {
+    try {
+      node.disconnect();
+    } catch {
+      // Already disconnected.
+    }
+  });
+  const index = activeVoices.indexOf(voice);
+  if (index >= 0) activeVoices.splice(index, 1);
+};
+
+const registerVoice = (voice: Omit<Voice, 'cleanupTimer'>) => {
+  if (!audioCtx) return;
+  const fullVoice: Voice = {
+    ...voice,
+    cleanupTimer: window.setTimeout(() => cleanupVoice(fullVoice), Math.max(250, (voice.stopAt - audioCtx.currentTime + 0.2) * 1000))
+  };
+
+  activeVoices.push(fullVoice);
+
+  while (activeVoices.length > MAX_ACTIVE_VOICES) {
+    const oldest = activeVoices.shift();
+    if (!oldest) break;
+    oldest.sources.forEach(source => {
+      try {
+        source.stop();
+      } catch {
+        // A finished or already stopped source throws; cleanup below still matters.
+      }
+    });
+    cleanupVoice(oldest);
+  }
+};
+
+const createSoftLimiterCurve = () => {
+  const samples = 2048;
+  const curve = new Float32Array(samples);
+  const drive = 1.8;
+  const normalizer = Math.tanh(drive);
+
+  for (let i = 0; i < samples; i++) {
+    const x = (i / (samples - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * drive) / normalizer;
+  }
+
+  return curve;
+};
 
 const initAudio = () => {
   if (!audioCtx) {
@@ -18,16 +81,25 @@ const initAudio = () => {
     masterGain = audioCtx.createGain();
     masterGain.gain.value = MASTER_OUTPUT_GAIN;
     
-    // Master Compressor - Tuned for "Loudness War" style sustain
+    // Master Compressor - raises perceived volume while catching stacked chord peaks.
     masterCompressor = audioCtx.createDynamicsCompressor();
-    masterCompressor.threshold.setValueAtTime(-30, audioCtx.currentTime); 
-    masterCompressor.knee.setValueAtTime(24, audioCtx.currentTime);
-    masterCompressor.ratio.setValueAtTime(16, audioCtx.currentTime);
-    masterCompressor.attack.setValueAtTime(0.002, audioCtx.currentTime);
-    masterCompressor.release.setValueAtTime(0.18, audioCtx.currentTime);
+    masterCompressor.threshold.setValueAtTime(-22, audioCtx.currentTime); 
+    masterCompressor.knee.setValueAtTime(20, audioCtx.currentTime);
+    masterCompressor.ratio.setValueAtTime(7, audioCtx.currentTime);
+    masterCompressor.attack.setValueAtTime(0.004, audioCtx.currentTime);
+    masterCompressor.release.setValueAtTime(0.16, audioCtx.currentTime);
+
+    masterLimiter = audioCtx.createWaveShaper();
+    masterLimiter.curve = createSoftLimiterCurve();
+    masterLimiter.oversample = '2x';
+
+    outputCeiling = audioCtx.createGain();
+    outputCeiling.gain.value = OUTPUT_CEILING_GAIN;
     
     masterGain.connect(masterCompressor);
-    masterCompressor.connect(audioCtx.destination);
+    masterCompressor.connect(masterLimiter);
+    masterLimiter.connect(outputCeiling);
+    outputCeiling.connect(audioCtx.destination);
   }
   return { ctx: audioCtx, output: masterGain! };
 };
@@ -39,6 +111,26 @@ export const resumeAudio = () => {
     if (audioCtx && (audioCtx.state === 'suspended' || (audioCtx.state as string) === 'interrupted')) {
         audioCtx.resume().catch(e => console.warn("Audio resume failed", e));
     }
+};
+
+export const stopAllAudio = () => {
+  activeVoices.splice(0).forEach(voice => {
+    window.clearTimeout(voice.cleanupTimer);
+    voice.sources.forEach(source => {
+      try {
+        source.stop();
+      } catch {
+        // Source may already be stopped.
+      }
+    });
+    voice.nodes.forEach(node => {
+      try {
+        node.disconnect();
+      } catch {
+        // Already disconnected.
+      }
+    });
+  });
 };
 
 export const BASE_FREQUENCIES = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
@@ -53,30 +145,46 @@ export const playPercussion = () => {
   osc.frequency.setValueAtTime(120, now);
   osc.frequency.exponentialRampToValueAtTime(0.01, now + 0.15);
   
-  gain.gain.setValueAtTime(0.85, now);
+  gain.gain.setValueAtTime(0.68, now);
   gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
   
   osc.connect(gain);
   gain.connect(output);
   osc.start(now);
   osc.stop(now + 0.2);
+
+  registerVoice({
+    sources: [osc],
+    nodes: [osc, gain],
+    stopAt: now + 0.22
+  });
 };
 
-export const playNote = (stringIdx: number, fret: number, type: 'normal' | 'hammer' | 'pull' | 'hammer-on' | 'pull-off' = 'normal', tuningOffset: number = 0) => {
+const scheduleNote = (
+  ctx: AudioContext,
+  output: AudioNode,
+  stringIdx: number,
+  fret: number,
+  type: 'normal' | 'hammer' | 'pull' | 'hammer-on' | 'pull-off' = 'normal',
+  tuningOffset: number = 0,
+  startTime: number = ctx.currentTime
+) => {
   if (fret < 0) return; 
-  const { ctx, output } = initAudio();
-  const now = ctx.currentTime;
+  const now = Math.max(ctx.currentTime, startTime);
   const freq = BASE_FREQUENCIES[stringIdx] * Math.pow(2, (fret + tuningOffset) / 12);
+  if (!Number.isFinite(freq)) return;
 
   const noteGain = ctx.createGain();
   const isBassString = stringIdx <= 2;
-  const baseAmplitude = isBassString ? 0.42 : 0.34;
-  const attackTime = (type === 'hammer-on' || type === 'pull-off') ? 0.025 : 0.004;
-  const decayDuration = isBassString ? 2.8 : 2.15;
+  const isLegato = type === 'hammer' || type === 'pull' || type === 'hammer-on' || type === 'pull-off';
+  const baseAmplitude = isBassString ? 0.31 : 0.26;
+  const attackTime = isLegato ? 0.018 : 0.006;
+  const decayDuration = isBassString ? 1.55 : 1.25;
 
-  noteGain.gain.setValueAtTime(0, now);
+  noteGain.gain.cancelScheduledValues(now);
+  noteGain.gain.setValueAtTime(0.0001, now);
   noteGain.gain.linearRampToValueAtTime(baseAmplitude, now + attackTime);
-  noteGain.gain.exponentialRampToValueAtTime(baseAmplitude * 0.38, now + 0.12);
+  noteGain.gain.exponentialRampToValueAtTime(baseAmplitude * 0.34, now + 0.11);
   noteGain.gain.exponentialRampToValueAtTime(0.001, now + decayDuration);
 
   const bodyFilter = ctx.createBiquadFilter();
@@ -90,11 +198,12 @@ export const playNote = (stringIdx: number, fret: number, type: 'normal' | 'hamm
   resonance.gain.setValueAtTime(isBassString ? 5 : 3, now);
   resonance.Q.value = 1.2;
 
-  const partials = [1, 2, 3, 4, 5, 6];
+  const partials = [1, 2, 3, 4];
   const amplitudes = isBassString
-    ? [1, 0.55, 0.32, 0.18, 0.1, 0.06]
-    : [1, 0.42, 0.24, 0.16, 0.08, 0.04];
+    ? [1, 0.5, 0.28, 0.14]
+    : [1, 0.4, 0.22, 0.12];
   const oscillators: OscillatorNode[] = [];
+  const harmonicGains: GainNode[] = [];
 
   // Additive Fourier-style synthesis: the harmonic stack makes chord qualities distinct.
   partials.forEach((multiple, index) => {
@@ -109,6 +218,7 @@ export const playNote = (stringIdx: number, fret: number, type: 'normal' | 'hamm
     osc.start(now);
     osc.stop(now + decayDuration + 0.08);
     oscillators.push(osc);
+    harmonicGains.push(harmonicGain);
   });
 
   const noiseBuffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.018), ctx.sampleRate);
@@ -121,7 +231,7 @@ export const playNote = (stringIdx: number, fret: number, type: 'normal' | 'hamm
   const pickFilter = ctx.createBiquadFilter();
   pickFilter.type = 'highpass';
   pickFilter.frequency.value = 1200;
-  pickGain.gain.setValueAtTime(isBassString ? 0.07 : 0.05, now);
+  pickGain.gain.setValueAtTime(isBassString ? 0.055 : 0.045, now);
   pickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
   pickNoise.buffer = noiseBuffer;
   pickNoise.connect(pickFilter);
@@ -133,28 +243,31 @@ export const playNote = (stringIdx: number, fret: number, type: 'normal' | 'hamm
   bodyFilter.connect(resonance);
   resonance.connect(noteGain);
   noteGain.connect(output);
-  
-  setTimeout(() => {
-      noteGain.disconnect();
-      bodyFilter.disconnect();
-      resonance.disconnect();
-      pickFilter.disconnect();
-      pickGain.disconnect();
-  }, (decayDuration + 0.5) * 1000);
+
+  registerVoice({
+    sources: [...oscillators, pickNoise],
+    nodes: [noteGain, bodyFilter, resonance, pickFilter, pickGain, ...harmonicGains, ...oscillators, pickNoise],
+    stopAt: now + decayDuration + 0.1
+  });
+};
+
+export const playNote = (stringIdx: number, fret: number, type: 'normal' | 'hammer' | 'pull' | 'hammer-on' | 'pull-off' = 'normal', tuningOffset: number = 0) => {
+  const { ctx, output } = initAudio();
+  scheduleNote(ctx, output, stringIdx, fret, type, tuningOffset);
 };
 
 export const playStrum = (notes: {string: number, fret: number}[], direction: 'D' | 'U' | 'X', speed: number = 1) => {
   if (direction === 'X') { playPercussion(); return; }
-  const { ctx } = initAudio(); 
+  const { ctx, output } = initAudio(); 
   const sortedNotes = [...notes].sort((a, b) => a.string - b.string);
   const sequence = direction === 'D' ? sortedNotes : sortedNotes.reverse();
-  const baseStrumDelay = (0.04 / speed); // Slightly tighter strum
+  const safeSpeed = Math.max(0.1, speed);
+  const baseStrumDelay = (0.032 / safeSpeed);
+  const startAt = ctx.currentTime + 0.006;
 
   sequence.forEach((note, index) => {
     if (note.fret === -1) return; 
-    setTimeout(() => {
-        playNote(note.string, note.fret, 'normal');
-    }, index * baseStrumDelay * 1000);
+    scheduleNote(ctx, output, note.string, note.fret, 'normal', 0, startAt + index * baseStrumDelay);
   });
 };
 

@@ -8,11 +8,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "audit:prod": "npm audit --omit=dev",
-    "deploy:vercel": "vercel --prod"
+    "deploy:vercel": "vercel --prod",
+    "validate:song-db": "node scripts/validate-song-db.mjs",
+    "audit:song-db": "node scripts/audit-song-db-completeness.mjs",
+    "smoke:db": "echo 'Run dev server first, then: curl -X POST http://localhost:5173/api/test-song-lookup -H \"Content-Type: application/json\" -d \"{\\\"query\\\":\\\"Majboor\\\"}\"'"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
+    "dotenv": "^17.4.2",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"

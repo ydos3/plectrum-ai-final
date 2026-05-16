@@ -40,6 +40,7 @@ type PersistedTeleprompterState = {
   fontSize?: number;
   handedness?: Handedness;
   syncOffset?: number;
+  splitRatio?: number;
 };
 
 const readTeleprompterState = (): PersistedTeleprompterState => {
@@ -137,6 +138,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const [isMashupMode, setIsMashupMode] = useState(false);
   const [syncOffset, setSyncOffset] = useState(() => clampNumber(persistedState.current.syncOffset, 0, -30, 30));
 
+  // Resizable split pane: ratio is the lyrics panel width (0.3 – 0.8)
+  const [splitRatio, setSplitRatio] = useState(() => clampNumber(persistedState.current.splitRatio, 0.67, 0.3, 0.8));
+  const isDraggingSplitRef = useRef(false);
+  const splitContainerRef = useRef<HTMLDivElement | null>(null);
+
   const [fallbackLevel, setFallbackLevel] = useState(1); 
   const [iframeKey, setIframeKey] = useState(0); 
   const [dynamicVideoId, setDynamicVideoId] = useState<string | null>(null);
@@ -161,9 +167,29 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       playbackSpeed,
       fontSize,
       handedness,
-      syncOffset
+      syncOffset,
+      splitRatio
     }));
-  }, [karaokeEnabled, playbackSpeed, fontSize, handedness, syncOffset]);
+  }, [karaokeEnabled, playbackSpeed, fontSize, handedness, syncOffset, splitRatio]);
+
+  // ─── Resizable Split Drag Handlers ─────────────────────────────────
+
+  const handleSplitPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    isDraggingSplitRef.current = true;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, []);
+
+  const handleSplitPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isDraggingSplitRef.current || !splitContainerRef.current) return;
+    const rect = splitContainerRef.current.getBoundingClientRect();
+    const ratio = Math.min(0.8, Math.max(0.3, (e.clientX - rect.left) / rect.width));
+    setSplitRatio(ratio);
+  }, []);
+
+  const handleSplitPointerUp = useCallback(() => {
+    isDraggingSplitRef.current = false;
+  }, []);
 
   useEffect(() => {
     activeLineIndexRef.current = activeLineIndex;
@@ -335,11 +361,17 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return activeIdx;
   }, []);
 
+  // Manual scroll hold: suppress forced auto-scroll for 3s after the
+  // last wheel/touch/pointer-drag so the teleprompter doesn't fight
+  // the user. The clock and active-line highlight still update so
+  // karaoke playback keeps running.
+  const MANUAL_SCROLL_HOLD_MS = 3000;
+
   const syncClockToManualScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    manualScrollHoldUntilRef.current = Date.now() + 450;
+    manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
     const scrollableDistance = Math.max(1, container.scrollHeight - container.clientHeight);
     const progress = Math.min(1, Math.max(0, container.scrollTop / scrollableDistance));
     const nextTime = progress * actualDuration;
@@ -400,6 +432,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, syncOffset, getLineTimings, getActiveLineForTime, scrollToProgress]);
 
   // Keep the lyric clock aligned to YouTube while paused. During karaoke playback, the main loop follows YouTube time.
+  // Respects manualScrollHoldUntilRef so user scroll is not overridden.
   useEffect(() => {
     if (!karaokeEnabled || !playerReady || isPlaying) return;
 
@@ -418,7 +451,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
           activeLineIndexRef.current = newActiveIdx;
           setActiveLineIndex(newActiveIdx);
         }
-        scrollToProgress(clampedTime);
+        // Only auto-scroll if the user is not actively scrolling
+        if (Date.now() >= manualScrollHoldUntilRef.current) {
+          scrollToProgress(clampedTime);
+        }
       }
     }, 80);
 
@@ -923,14 +959,23 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         </div>
       </div>
 
-      <div className={`flex-1 min-h-0 overflow-hidden relative flex ${karaokeEnabled ? 'flex-col md:flex-row' : ''}`}>
-         <div className={`min-h-0 relative transition-all duration-500 ${karaokeEnabled ? 'flex-1 md:w-2/3 border-r border-white/[0.05] order-2 md:order-1' : 'w-full h-full'}`}>
+      <div
+        ref={splitContainerRef}
+        onPointerMove={karaokeEnabled ? handleSplitPointerMove : undefined}
+        onPointerUp={karaokeEnabled ? handleSplitPointerUp : undefined}
+        className={`flex-1 min-h-0 overflow-hidden relative flex ${karaokeEnabled ? 'flex-col md:flex-row' : ''}`}
+        style={karaokeEnabled ? { userSelect: isDraggingSplitRef.current ? 'none' : undefined } as React.CSSProperties : undefined}
+      >
+         <div
+           className={`min-h-0 relative ${karaokeEnabled ? 'border-r border-white/[0.05] order-2 md:order-1' : 'w-full h-full'}`}
+           style={karaokeEnabled ? { flex: '0 0 auto', width: `${splitRatio * 100}%` } as React.CSSProperties : undefined}
+         >
              <div
                ref={scrollContainerRef}
                onWheel={syncClockToManualScroll}
                onTouchMove={syncClockToManualScroll}
                onPointerMove={(event) => {
-                 if (event.buttons === 1) syncClockToManualScroll();
+                 if (event.buttons === 1 && !isDraggingSplitRef.current) syncClockToManualScroll();
                }}
                className="h-full overflow-y-auto relative custom-scrollbar pb-32"
              >
@@ -946,8 +991,22 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-black to-transparent pointer-events-none z-10"></div>
          </div>
 
+         {/* Draggable divider — desktop only */}
          {karaokeEnabled && (
-             <div className="md:w-1/3 bg-black/50 backdrop-blur-xl flex flex-col h-[40vh] md:h-full border-b md:border-b-0 md:border-l border-white/[0.05] shadow-2xl animate-in slide-in-from-right duration-300 order-1 md:order-2 shrink-0">
+           <div
+             onPointerDown={handleSplitPointerDown}
+             className="hidden md:flex items-center justify-center w-2 cursor-col-resize order-2 shrink-0 group/divider z-20 hover:bg-white/[0.06] active:bg-indigo-500/20 transition-colors"
+             style={{ touchAction: 'none' }}
+           >
+             <div className="w-0.5 h-12 rounded-full bg-white/20 group-hover/divider:bg-indigo-400/60 group-active/divider:bg-indigo-400 transition-colors"></div>
+           </div>
+         )}
+
+         {karaokeEnabled && (
+             <div
+               className="bg-black/50 backdrop-blur-xl flex flex-col h-[40vh] md:h-full border-b md:border-b-0 md:border-l border-white/[0.05] shadow-2xl animate-in slide-in-from-right duration-300 order-1 md:order-3 shrink-0"
+               style={{ flex: '1 1 0%', minWidth: 0 }}
+             >
                  <div className="p-3 md:p-4 bg-white/[0.03] border-b border-white/[0.05] flex items-center justify-between backdrop-blur-lg">
                      <div className="flex items-center gap-2 text-indigo-400 font-bold uppercase tracking-widest text-xs">
                          <Youtube className="w-4 h-4" /> 

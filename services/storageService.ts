@@ -54,15 +54,79 @@ I'll love you for a [D] thousand more`
     }
 ];
 
+const countLyricLines = (content: string) => (
+  content
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('###')).length
+);
+
+const getSectionLabel = (header: string) => {
+  const match = header.match(/^###\s*\[([^\]]+)\]/);
+  return (match?.[1] || header.replace(/^#+\s*/, '')).trim();
+};
+
+const relabelSection = (block: string, label: string) => (
+  block.replace(/^###\s*\[[^\]]+\]/, `### [${label}]`)
+);
+
+const completePerformanceArrangement = (content: string, minimumLines = 24) => {
+  if (!content || countLyricLines(content) >= minimumLines) return content;
+
+  const blocks = content
+    .split(/\n(?=###\s*\[[^\]]+\])/)
+    .map(block => block.trim())
+    .filter(Boolean);
+
+  if (blocks.length < 2) return content;
+
+  const findBlock = (pattern: RegExp) => blocks.find(block => pattern.test(getSectionLabel(block)));
+  const intro = findBlock(/intro/i);
+  const verse1 = findBlock(/verse\s*1/i) || findBlock(/verse/i);
+  const verse2 = findBlock(/verse\s*2/i);
+  const preChorus = findBlock(/pre/i);
+  const chorus = findBlock(/chorus/i);
+  const bridge = findBlock(/bridge/i);
+  const outro = findBlock(/outro/i);
+
+  if (!verse1 || !chorus) return content;
+
+  const arranged = [
+    intro && relabelSection(intro, 'Intro'),
+    relabelSection(verse1, 'Verse 1'),
+    preChorus && relabelSection(preChorus, 'Pre-Chorus 1'),
+    relabelSection(chorus, 'Chorus 1'),
+    relabelSection(verse2 || verse1, 'Verse 2'),
+    preChorus && relabelSection(preChorus, 'Pre-Chorus 2'),
+    relabelSection(chorus, 'Chorus 2'),
+    bridge && relabelSection(bridge, 'Bridge'),
+    relabelSection(chorus, 'Final Chorus'),
+    outro && relabelSection(outro, 'Outro'),
+  ].filter(Boolean) as string[];
+
+  const arrangedContent = arranged.join('\n\n');
+  return countLyricLines(arrangedContent) > countLyricLines(content)
+    ? arrangedContent
+    : content;
+};
+
+const normalizeStoredSong = (song: Song): Song => ({
+  ...song,
+  content: completePerformanceArrangement(song.content || ''),
+});
+
 export const getSongs = (): Song[] => {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
     if (!data) {
         // Initialize with default song if library is empty
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SONGS));
-        return DEFAULT_SONGS;
+        const normalizedDefaults = DEFAULT_SONGS.map(normalizeStoredSong);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedDefaults));
+        return normalizedDefaults;
     }
-    return JSON.parse(data);
+    const songs = (JSON.parse(data) as Song[]).map(normalizeStoredSong);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(songs));
+    return songs;
   } catch (e) {
     console.error("Failed to load songs", e);
     return [];
@@ -72,13 +136,14 @@ export const getSongs = (): Song[] => {
 export const saveSong = (song: Song): void => {
   const data = localStorage.getItem(STORAGE_KEY);
   const allSongs: Song[] = data ? JSON.parse(data) : [];
+  const normalizedSong = normalizeStoredSong(song);
 
-  const existingIndex = allSongs.findIndex(s => s.id === song.id);
+  const existingIndex = allSongs.findIndex(s => s.id === normalizedSong.id);
   
   if (existingIndex >= 0) {
-    allSongs[existingIndex] = song;
+    allSongs[existingIndex] = normalizedSong;
   } else {
-    allSongs.push(song);
+    allSongs.push(normalizedSong);
   }
   
   localStorage.setItem(STORAGE_KEY, JSON.stringify(allSongs));

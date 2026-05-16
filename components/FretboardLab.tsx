@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import GuitarFretboard from './GuitarFretboard';
 import { Handedness, Song } from '../types';
 import { getChordFingering, getAllChords } from '../services/chordService';
-import { playStrum, playNote, playPercussion, resumeAudio } from '../services/audioService';
+import { playStrum, playNote, playPercussion, resumeAudio, stopAllAudio } from '../services/audioService';
 import { getSongs } from '../services/storageService';
 import { parseFingerstyleTab } from '../services/tabParser';
 import { Play, Pause, Square, Hand, Zap, RotateCcw, FolderOpen, Plus, Activity, Info, Trash2, ArrowLeft } from 'lucide-react';
@@ -94,6 +94,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
     return () => {
         if (playbackTimeout.current) window.clearTimeout(playbackTimeout.current);
         isPlayingRef.current = false;
+        stopAllAudio();
     };
   }, []);
 
@@ -170,6 +171,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   };
 
   const startPlayback = () => {
+      if (playbackTimeout.current) window.clearTimeout(playbackTimeout.current);
       resumeAudio(); // Ensure audio context is ready
       isPlayingRef.current = true;
       setIsPlaying(true);
@@ -187,6 +189,8 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
       isPlayingRef.current = false;
       setIsPlaying(false);
       if (playbackTimeout.current) window.clearTimeout(playbackTimeout.current);
+      playbackTimeout.current = null;
+      stopAllAudio();
       setActiveNotes([]);
   };
 
