@@ -372,6 +372,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     if (!container) return;
 
     manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
+
+    // In karaoke mode, the video player is the source of truth for time.
+    // Manual scrolling should just pause auto-scroll (done above) so the user can read.
+    // It should NOT overwrite the current playback time or active line highlight.
+    if (karaokeEnabled) return;
+
     const scrollableDistance = Math.max(1, container.scrollHeight - container.clientHeight);
     const progress = Math.min(1, Math.max(0, container.scrollTop / scrollableDistance));
     const nextTime = progress * actualDuration;
@@ -384,7 +390,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       activeLineIndexRef.current = newActiveIdx;
       setActiveLineIndex(newActiveIdx);
     }
-  }, [actualDuration, getActiveLineForTime, getLineTimings]);
+  }, [actualDuration, getActiveLineForTime, getLineTimings, karaokeEnabled]);
 
   useEffect(() => {
     if (!isPlaying) {
