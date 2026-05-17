@@ -348,6 +348,12 @@ const App: React.FC = () => {
                             </div>
                         )}
                     </div>
+                    <div className="absolute bottom-3 left-0 right-0 z-30 flex flex-wrap justify-center gap-3 px-4 text-[10px] text-amber-200/45 no-global-click">
+                        <a href="/terms/" className="hover:text-amber-200 transition-colors">Terms</a>
+                        <a href="/privacy/" className="hover:text-amber-200 transition-colors">Privacy</a>
+                        <a href="/copyright/" className="hover:text-amber-200 transition-colors">Copyright</a>
+                        <a href="/ai-disclosure/" className="hover:text-amber-200 transition-colors">AI Disclosure</a>
+                    </div>
                 </div>
             ) : (
                 <Layout

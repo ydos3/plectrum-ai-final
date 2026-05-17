@@ -25,6 +25,18 @@ coverage
 # Generated local data/report files.
 data/song-library.json
 data/song-db-completeness-report.json
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+recordings/
+private-recordings/
+*.webm
+*.mp4
+*.mov
+*.tmp
+*.temp
 
 # Editor directories and files
 .vscode/*

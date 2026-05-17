@@ -244,6 +244,12 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             <button onClick={(e) => { e.stopPropagation(); handleLogout(); }} className="w-full flex items-center justify-center gap-2 text-xs text-amber-600 hover:text-red-400 transition-colors">
               <LogOut className="w-3 h-3" /> Sign Out
             </button>
+            <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px] text-amber-700/80 no-global-click">
+              <a href="/terms/" className="hover:text-amber-300 transition-colors">Terms</a>
+              <a href="/privacy/" className="hover:text-amber-300 transition-colors">Privacy</a>
+              <a href="/copyright/" className="hover:text-amber-300 transition-colors">Copyright</a>
+              <a href="/ai-disclosure/" className="hover:text-amber-300 transition-colors">AI Disclosure</a>
+            </div>
           </div>
         </aside>
       )}
@@ -294,6 +300,12 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             <button onClick={handleLogout} className="w-full py-4 text-amber-500 flex items-center justify-center gap-2 border-t border-amber-900/50 mt-8">
               <LogOut className="w-4 h-4" /> Sign Out
             </button>
+            <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 pt-4 text-[11px] text-amber-700 no-global-click">
+              <a href="/terms/" className="hover:text-amber-300">Terms</a>
+              <a href="/privacy/" className="hover:text-amber-300">Privacy</a>
+              <a href="/copyright/" className="hover:text-amber-300">Copyright</a>
+              <a href="/ai-disclosure/" className="hover:text-amber-300">AI Disclosure</a>
+            </div>
           </nav>
         </div>
       )}
