@@ -83,27 +83,27 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
       <head>
         <title>${safeTitle} - Plectrum AI</title>
         <style>
-          @page { size: A4; margin: 9mm 10mm 11mm; }
+          @page { size: A4; margin: 10mm; }
           * { box-sizing: border-box; }
           html, body { margin: 0; padding: 0; }
-          body { font-family: Georgia, 'Times New Roman', serif; color: #211813; background: #fffaf2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .sheet { position: relative; min-height: calc(297mm - 20mm); padding: 7mm 8mm 11mm; background: #fffdf8; border: 2px solid #3f2a1e; box-shadow: inset 0 0 0 1px #d8b47c; }
-          .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: end; padding: 7px 8px 8px; margin: -1px -1px 8px; background: #fbf1df; border: 1px solid #d8b47c; border-bottom: 3px solid #3f2a1e; break-after: avoid; page-break-after: avoid; }
-          h1 { margin: 0; color: #20130d; font-family: Arial, Helvetica, sans-serif; font-size: 24px; line-height: 1.05; font-weight: 900; }
-          h2 { margin: 3px 0 0; color: #9a5b12; font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: 800; }
-          .meta { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 285px; font-family: Arial, Helvetica, sans-serif; font-size: 9.5px; color: #4a3528; text-align: right; }
-          .pill { border: 1px solid #c9954d; background: #fff7e7; border-radius: 4px; padding: 3px 6px; font-weight: 800; white-space: nowrap; }
-          .brand { width: 100%; color: #8f5311; font-size: 8.5px; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
+          body { font-family: Arial, Helvetica, sans-serif; color: #211813; background: #ffffff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .sheet { position: relative; padding: 5mm; background: #fffaf2; border: 1.5px solid #d97706; border-radius: 6px; }
+          .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: end; padding: 9px 10px; margin-bottom: 9px; background: linear-gradient(135deg, #2d1b15 0%, #5d2f12 100%); border: 1px solid #d97706; border-radius: 5px; break-after: avoid; page-break-after: avoid; }
+          h1 { margin: 0; color: #fff7ed; font-size: 25px; line-height: 1.05; font-weight: 900; }
+          h2 { margin: 3px 0 0; color: #fbbf24; font-size: 13px; font-weight: 800; }
+          .meta { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 285px; font-size: 9.5px; color: #fff7ed; text-align: right; }
+          .pill { border: 1px solid rgba(251,191,36,0.55); background: rgba(255,247,237,0.1); border-radius: 5px; padding: 3px 6px; font-weight: 800; white-space: nowrap; }
+          .brand { width: 100%; color: #fbbf24; font-size: 8.5px; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
           .content { position: relative; z-index: 1; display: grid; gap: 2px; }
-          .section { margin: 8px 0 3px; padding: 3px 7px; background: #3f2a1e; color: #fff4d6; border-left: 4px solid #d08a1e; border-radius: 2px; font-family: Arial, Helvetica, sans-serif; font-size: 9.5px; font-weight: 900; letter-spacing: 0.11em; text-transform: uppercase; page-break-after: avoid; break-after: avoid; }
-          .song-line { display: grid; grid-template-columns: minmax(0,1fr) minmax(78px,25%); gap: 9px; align-items: baseline; min-height: 16px; padding: 2px 4px; border-bottom: 1px solid #ead8bb; break-inside: avoid; page-break-inside: avoid; }
-          .song-line:nth-child(even) { background: #fff8eb; }
-          .lyric-line { font-size: 11.8px; line-height: 1.24; color: #211813; word-break: break-word; }
+          .section { margin: 8px 0 3px; padding: 2px 0 3px; color: #b45309; border-bottom: 1.5px solid #f4c06a; font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; page-break-after: avoid; break-after: avoid; }
+          .song-line { display: grid; grid-template-columns: minmax(0,1fr) minmax(82px,25%); gap: 9px; align-items: baseline; min-height: 17px; padding: 2px 5px; border-bottom: 1px solid #f1dfc0; break-inside: avoid; page-break-inside: avoid; }
+          .song-line:nth-child(even) { background: #fff3dd; }
+          .lyric-line { font-size: 12px; line-height: 1.25; color: #211813; word-break: break-word; }
           .chord-rail { display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 3px; min-width: 0; }
-          .chord-rail span { font-family: Consolas, 'Courier New', monospace; font-size: 9.8px; line-height: 1.05; font-weight: 900; color: #5f3307; background: #f6d38f; border: 1px solid #b97816; border-radius: 3px; padding: 1px 4px; }
+          .chord-rail span { font-family: Consolas, 'Courier New', monospace; font-size: 10px; line-height: 1.05; font-weight: 900; color: #2d1b15; background: #fbbf24; border: 1px solid #d97706; border-radius: 4px; padding: 1px 4px; }
           .spacer { height: 3px; }
-          .footer { position: fixed; left: 18mm; right: 18mm; bottom: 5mm; display: flex; justify-content: space-between; border-top: 1px solid #d8b47c; padding-top: 3px; color: #76552e; font-family: Arial, Helvetica, sans-serif; font-size: 8px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; background: #fffdf8; }
-          @media screen { body { background: #efe0c7; } .sheet { max-width: 210mm; min-height: 297mm; margin: 18px auto; padding: 10mm 11mm 14mm; box-shadow: 0 20px 70px rgba(0,0,0,0.24), inset 0 0 0 1px #d8b47c; } .footer { position: static; margin-top: 10px; } }
+          .footer { display: flex; justify-content: space-between; margin-top: 8px; border-top: 1px solid #f4c06a; padding-top: 4px; color: #92400e; font-size: 8px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; background: #fffaf2; }
+          @media screen { body { background: #2d1b15; } .sheet { max-width: 210mm; min-height: 297mm; margin: 18px auto; padding: 10mm; box-shadow: 0 20px 70px rgba(0,0,0,0.3); } }
         </style>
       </head>
       <body>
