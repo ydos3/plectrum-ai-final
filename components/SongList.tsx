@@ -83,26 +83,27 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
       <head>
         <title>${safeTitle} - Plectrum AI</title>
         <style>
-          @page { size: A4; margin: 10mm 11mm 12mm; }
+          @page { size: A4; margin: 9mm 10mm 11mm; }
           * { box-sizing: border-box; }
           html, body { margin: 0; padding: 0; }
-          body { font-family: Arial, Helvetica, sans-serif; color: #1f1a17; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .sheet { position: relative; }
-          .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: end; padding-bottom: 7px; border-bottom: 1.5px solid #2d1b15; margin-bottom: 8px; break-after: avoid; page-break-after: avoid; }
-          h1 { margin: 0; color: #17120f; font-size: 21px; line-height: 1.05; font-weight: 800; }
-          h2 { margin: 2px 0 0; color: #7c4a16; font-size: 11px; font-weight: 700; }
-          .meta { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 270px; font-size: 8.5px; color: #4a3528; text-align: right; }
-          .pill { border: 1px solid #d9c3a6; background: #fff8ec; border-radius: 4px; padding: 2px 5px; font-weight: 700; white-space: nowrap; }
-          .brand { width: 100%; color: #9a5b12; font-size: 8px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
-          .content { position: relative; z-index: 1; display: grid; gap: 3px; }
-          .section { margin: 7px 0 2px; padding: 2px 5px; background: #2d1b15; color: #fff4d6; border-radius: 3px; font-size: 8.5px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; page-break-after: avoid; break-after: avoid; }
-          .song-line { display: grid; grid-template-columns: minmax(0,1fr) minmax(70px,24%); gap: 8px; align-items: baseline; min-height: 14px; padding: 1px 0; border-bottom: 1px solid rgba(70,47,35,0.12); break-inside: avoid; page-break-inside: avoid; }
-          .lyric-line { font-size: 10.6px; line-height: 1.18; color: #1f1a17; word-break: break-word; }
-          .chord-rail { display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 2px; min-width: 0; }
-          .chord-rail span { font-family: Consolas, 'Courier New', monospace; font-size: 8.8px; line-height: 1.05; font-weight: 800; color: #7a4208; background: #fff7e8; border: 1px solid #ead2aa; border-radius: 3px; padding: 1px 3px; }
-          .spacer { height: 2px; }
-          .footer { position: fixed; left: 11mm; right: 11mm; bottom: 5mm; display: flex; justify-content: space-between; border-top: 1px solid #ead2aa; padding-top: 3px; color: #8a6a3b; font-size: 7.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; background: #fff; }
-          @media screen { body { background: #f3eadb; } .sheet { max-width: 210mm; min-height: 297mm; margin: 18px auto; padding: 10mm 11mm 12mm; background: #fff; box-shadow: 0 20px 70px rgba(0,0,0,0.24); } .footer { position: static; margin-top: 10px; } }
+          body { font-family: Georgia, 'Times New Roman', serif; color: #211813; background: #fffaf2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .sheet { position: relative; min-height: calc(297mm - 20mm); padding: 7mm 8mm 11mm; background: #fffdf8; border: 2px solid #3f2a1e; box-shadow: inset 0 0 0 1px #d8b47c; }
+          .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: end; padding: 7px 8px 8px; margin: -1px -1px 8px; background: #fbf1df; border: 1px solid #d8b47c; border-bottom: 3px solid #3f2a1e; break-after: avoid; page-break-after: avoid; }
+          h1 { margin: 0; color: #20130d; font-family: Arial, Helvetica, sans-serif; font-size: 24px; line-height: 1.05; font-weight: 900; }
+          h2 { margin: 3px 0 0; color: #9a5b12; font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: 800; }
+          .meta { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 285px; font-family: Arial, Helvetica, sans-serif; font-size: 9.5px; color: #4a3528; text-align: right; }
+          .pill { border: 1px solid #c9954d; background: #fff7e7; border-radius: 4px; padding: 3px 6px; font-weight: 800; white-space: nowrap; }
+          .brand { width: 100%; color: #8f5311; font-size: 8.5px; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
+          .content { position: relative; z-index: 1; display: grid; gap: 2px; }
+          .section { margin: 8px 0 3px; padding: 3px 7px; background: #3f2a1e; color: #fff4d6; border-left: 4px solid #d08a1e; border-radius: 2px; font-family: Arial, Helvetica, sans-serif; font-size: 9.5px; font-weight: 900; letter-spacing: 0.11em; text-transform: uppercase; page-break-after: avoid; break-after: avoid; }
+          .song-line { display: grid; grid-template-columns: minmax(0,1fr) minmax(78px,25%); gap: 9px; align-items: baseline; min-height: 16px; padding: 2px 4px; border-bottom: 1px solid #ead8bb; break-inside: avoid; page-break-inside: avoid; }
+          .song-line:nth-child(even) { background: #fff8eb; }
+          .lyric-line { font-size: 11.8px; line-height: 1.24; color: #211813; word-break: break-word; }
+          .chord-rail { display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 3px; min-width: 0; }
+          .chord-rail span { font-family: Consolas, 'Courier New', monospace; font-size: 9.8px; line-height: 1.05; font-weight: 900; color: #5f3307; background: #f6d38f; border: 1px solid #b97816; border-radius: 3px; padding: 1px 4px; }
+          .spacer { height: 3px; }
+          .footer { position: fixed; left: 18mm; right: 18mm; bottom: 5mm; display: flex; justify-content: space-between; border-top: 1px solid #d8b47c; padding-top: 3px; color: #76552e; font-family: Arial, Helvetica, sans-serif; font-size: 8px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; background: #fffdf8; }
+          @media screen { body { background: #efe0c7; } .sheet { max-width: 210mm; min-height: 297mm; margin: 18px auto; padding: 10mm 11mm 14mm; box-shadow: 0 20px 70px rgba(0,0,0,0.24), inset 0 0 0 1px #d8b47c; } .footer { position: static; margin-top: 10px; } }
         </style>
       </head>
       <body>
