@@ -1,6 +1,6 @@
 # Acceptable Use Policy
 
-Effective date: [EFFECTIVE_DATE]
+Effective date: May 17, 2026
 
 Plectrum AI is for educational, personal, and private music practice.
 
@@ -14,4 +14,3 @@ You may not use Plectrum AI to:
 - Attempt to extract secrets, disrupt the service, or access data that does not belong to you.
 
 Repeat or serious misuse may result in limited or terminated access.
-

@@ -1,8 +1,8 @@
 # Privacy Policy
 
-Effective date: [EFFECTIVE_DATE]
+Effective date: May 17, 2026
 
-This Privacy Policy explains how [COMPANY_NAME] may process information when you use Plectrum AI.
+This Privacy Policy explains how Plectrum AI may process information when you use Plectrum AI.
 
 ## What Plectrum AI Is
 
@@ -36,7 +36,7 @@ Local browser data remains until deleted by the user or browser. Server-side log
 
 ## Your Requests
 
-To request access, correction, deletion, or export of personal data, contact [CONTACT_EMAIL]. We may need information to verify your request.
+To request access, correction, deletion, or export of personal data, contact plectrummusic3@gmail.com. We may need information to verify your request.
 
 ## Children
 
@@ -44,5 +44,4 @@ Plectrum AI is not intended to knowingly collect personal information from child
 
 ## Contact
 
-Privacy questions: [CONTACT_EMAIL]
-
+Privacy questions: plectrummusic3@gmail.com

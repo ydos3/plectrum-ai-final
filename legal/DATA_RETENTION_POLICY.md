@@ -1,6 +1,6 @@
 # Data Retention Policy
 
-Effective date: [EFFECTIVE_DATE]
+Effective date: May 17, 2026
 
 This policy summarizes expected retention for Plectrum AI.
 
@@ -8,7 +8,6 @@ This policy summarizes expected retention for Plectrum AI.
 - Private practice recordings may remain in IndexedDB until deleted by the user or browser.
 - Server logs, if enabled, should be retained only as long as reasonably needed for security, debugging, abuse prevention, and legal compliance.
 - AI requests and third-party processing may be retained according to the relevant provider's policies.
-- Deletion/export requests can be sent to [CONTACT_EMAIL].
+- Deletion/export requests can be sent to plectrummusic3@gmail.com.
 
 This policy should be revisited before broad public launch or account-based sync.
-

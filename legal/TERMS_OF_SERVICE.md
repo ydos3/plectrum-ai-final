@@ -1,8 +1,8 @@
 # Terms of Service
 
-Effective date: [EFFECTIVE_DATE]
+Effective date: May 17, 2026
 
-These Terms govern use of Plectrum AI, an AI-assisted guitar and music practice companion provided by [COMPANY_NAME]. These Terms are not legal advice and may need review by counsel before broad public launch.
+These Terms govern use of Plectrum AI, an AI-assisted guitar and music practice companion provided by Plectrum AI. These Terms are not legal advice and may need review by counsel before broad public launch.
 
 ## Purpose
 
@@ -34,5 +34,4 @@ Plectrum AI will respond to valid copyright takedown requests. Repeat infringers
 
 ## Contact
 
-Questions: [CONTACT_EMAIL]
-
+Questions: plectrummusic3@gmail.com
