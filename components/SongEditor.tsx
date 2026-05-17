@@ -476,27 +476,27 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             )}
 
             {/* Header */}
-            <div className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#5d4037] bg-[#1a0f0a]/50 backdrop-blur-md z-10 shrink-0 shadow-md">
-                <div className="flex items-center gap-2 md:gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 md:px-6 py-3 md:py-4 border-b border-[#5d4037] bg-[#1a0f0a]/50 backdrop-blur-md z-10 shrink-0 shadow-md">
+                <div className="flex items-center gap-2 md:gap-4 min-w-0">
                     <button onClick={onCancel} className="p-2 hover:bg-white/10 rounded-lg text-amber-200/60 hover:text-white transition-colors">
                         <ArrowLeft className="w-5 h-5" />
                     </button>
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-amber-600 to-amber-800 rounded-lg flex items-center justify-center shadow-lg border border-[#5d4037]">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 md:w-10 md:h-10 bg-gradient-to-br from-amber-600 to-amber-800 rounded-lg flex items-center justify-center shadow-lg border border-[#5d4037] shrink-0">
                             <Music className="w-5 h-5 text-white" />
                         </div>
-                        <div>
+                        <div className="min-w-0">
                             <h2 className="text-base font-bold text-amber-100 leading-tight font-display">{songToEdit ? 'Edit Composition' : 'New Composition'}</h2>
                             <p className="text-[10px] text-amber-500 uppercase tracking-wider font-bold">Studio Mode</p>
                         </div>
                     </div>
                 </div>
 
-                <div id="tour-composer-tools" className="flex items-center gap-2 md:gap-3">
-                    <button onClick={() => setShowMashupModal(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs md:text-sm bg-[#3e2723] text-amber-200 border border-[#5d4037] hover:bg-[#4e342e] hover:text-white transition-all shadow-sm">
+                <div id="tour-composer-tools" className="grid grid-cols-4 sm:flex sm:items-center gap-2 md:gap-3 w-full sm:w-auto">
+                    <button onClick={() => setShowMashupModal(true)} className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-bold text-xs md:text-sm bg-[#3e2723] text-amber-200 border border-[#5d4037] hover:bg-[#4e342e] hover:text-white transition-all shadow-sm">
                         <Merge className="w-4 h-4" /> <span className="hidden md:inline">Mashup</span>
                     </button>
-                    <button onClick={() => setShowMagicTools(!showMagicTools)} className={`flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs md:text-sm transition-all shadow-sm ${showMagicTools ? 'bg-amber-600 text-white shadow-amber-500/30' : 'bg-[#3e2723] text-amber-400 hover:text-white border border-[#5d4037]'}`}>
+                    <button onClick={() => setShowMagicTools(!showMagicTools)} className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-bold text-xs md:text-sm transition-all shadow-sm ${showMagicTools ? 'bg-amber-600 text-white shadow-amber-500/30' : 'bg-[#3e2723] text-amber-400 hover:text-white border border-[#5d4037]'}`}>
                         <Wand2 className="w-4 h-4" /> <span className="hidden md:inline">AI Tools</span>
                     </button>
 
@@ -504,7 +504,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
                     <button
                         onClick={handleVoiceGenerate}
                         disabled={isAiProcessing}
-                        className={`relative flex items-center gap-2 px-4 py-2 rounded-full font-bold text-xs md:text-sm border transition-all shadow-[0_0_15px_rgba(239,68,68,0.3)] group overflow-hidden ${isAiListening ? 'bg-red-600 text-white border-red-400 animate-pulse' : 'bg-gradient-to-r from-red-900 to-slate-900 text-white border-red-500/50 hover:border-red-400 hover:scale-105'}`}
+                        className={`relative flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-lg md:rounded-full font-bold text-xs md:text-sm border transition-all shadow-[0_0_15px_rgba(239,68,68,0.3)] group overflow-hidden ${isAiListening ? 'bg-red-600 text-white border-red-400 animate-pulse' : 'bg-gradient-to-r from-red-900 to-slate-900 text-white border-red-500/50 hover:border-red-400 hover:scale-105'}`}
                     >
                         <div className="relative flex items-center gap-2 z-10">
                             <div className="bg-white/20 p-1 rounded-full">
@@ -515,7 +515,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
                         {!isAiListening && <div className="absolute inset-0 bg-red-500/20 blur-lg group-hover:bg-red-500/40 transition-all"></div>}
                     </button>
 
-                    <button onClick={handleSave} className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-lg font-bold shadow-lg shadow-amber-900/30 text-xs md:text-sm transition-all transform hover:-translate-y-0.5">
+                    <button onClick={handleSave} className="flex items-center justify-center gap-2 px-4 md:px-5 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-lg font-bold shadow-lg shadow-amber-900/30 text-xs md:text-sm transition-all transform hover:-translate-y-0.5">
                         <Save className="w-4 h-4" /> Save
                     </button>
                 </div>
@@ -697,7 +697,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
                                     <input value={karaokeUrl} onChange={e => setKaraokeUrl(e.target.value)} className="w-full bg-transparent text-amber-100 p-2 outline-none text-xs" placeholder="YouTube URL..." />
                                     {karaokeUrl && (
                                         <>
-                                            <button onClick={() => setShowPreviewPlayer(!showPreviewPlayer)} className="text-amber-500 hover:text-white" title="Preview">
+                                            <button onClick={() => setShowPreviewPlayer(!showPreviewPlayer)} className="text-amber-500 hover:text-white" title="Preview link">
                                                 <PlayCircle className="w-4 h-4" />
                                             </button>
                                             <button onClick={() => window.open(karaokeUrl, '_blank')} className="text-amber-500 hover:text-white" title="Open External">
@@ -710,16 +710,17 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
                             </div>
                         </div>
                     )}
-                    {/* Mini Preview Player for Composer */}
+                    {/* Lightweight preview link for Composer */}
                     {showPreviewPlayer && karaokeUrl && youtubePreviewId && (
-                        <div className="mt-4 rounded-xl overflow-hidden border border-[#5d4037] shadow-lg aspect-video relative animate-in zoom-in">
+                        <div className="mt-4 rounded-xl border border-[#5d4037] shadow-lg relative animate-in zoom-in bg-[#0f0a08]/70 p-3">
                             <button onClick={() => setShowPreviewPlayer(false)} className="absolute top-2 right-2 p-1 bg-black/60 text-white rounded-full z-10"><X className="w-4 h-4" /></button>
-                            <iframe
-                                className="w-full h-full"
-                                src={`https://www.youtube.com/embed/${youtubePreviewId}?autoplay=0&origin=${window.location.origin}`}
-                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                allowFullScreen
-                            ></iframe>
+                            <div className="pr-8">
+                                <p className="text-xs font-bold text-amber-100 mb-1">Video link is ready</p>
+                                <p className="text-[10px] text-amber-700 mb-3 break-all">youtube.com/watch?v={youtubePreviewId}</p>
+                                <button onClick={() => window.open(karaokeUrl, '_blank', 'noopener,noreferrer')} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-colors">
+                                    <ExternalLink className="w-3 h-3" /> Open on YouTube
+                                </button>
+                            </div>
                         </div>
                     )}
                     {showPreviewPlayer && karaokeUrl && !youtubePreviewId && (

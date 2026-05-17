@@ -697,7 +697,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     });
 
     return () => { isMounted = false; };
-  }, [karaokeEnabled, fallbackLevel, videoUrl, isMashupMode, song, searchQuery, iframeKey]);
+  }, [karaokeEnabled, fallbackLevel, videoUrl, isMashupMode, song, searchQuery]);
 
   useEffect(() => {
     if (!karaokeEnabled) {
