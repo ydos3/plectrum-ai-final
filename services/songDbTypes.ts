@@ -1,6 +1,6 @@
 /**
  * Type definitions for the private acoustic setlist database schema.
- * Maps to /data/acoustic_setlist_db.json structure.
+ * Maps to the bundled acoustic setlist database schema.
  */
 
 export interface AcousticDbSong {

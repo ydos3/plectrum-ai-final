@@ -53,6 +53,23 @@ const significantTokens = (value: string) => (
 
 const compact = (value: string) => normalizeSongSearchText(value).replace(/\s+/g, '');
 
+const cleanLyricLookupQuery = (query: string) => (
+  query
+    .replace(/\b(?:please|pls|give|show|find|fetch|get|make|create|generate)\s+(?:me\s+)?(?:the\s+)?/gi, ' ')
+    .replace(/\b(?:lyrics?|lyrical|chords?|tabs?|guitar|karaoke|official|audio|video|version)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+);
+
+const canonicalTrackTitle = (track: LRCLibTrack) => {
+  const artistPattern = track.artistName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return track.trackName
+    .replace(new RegExp(`\\s+-\\s+${artistPattern}\\s*$`, 'i'), '')
+    .replace(new RegExp(`^${artistPattern}\\s+-\\s+`, 'i'), '')
+    .replace(/\s+\[[^\]]*(?:official|audio|video|lyrics?|lyric)[^\]]*\]\s*$/i, '')
+    .trim() || track.trackName;
+};
+
 const bigrams = (value: string) => {
   const clean = compact(value);
   const grams: string[] = [];
@@ -141,11 +158,9 @@ const scoreTrackForQuery = (query: string, track: LRCLibTrack) => {
 };
 
 const hasArtistQualifier = (query: string, track: LRCLibTrack) => {
-  const queryTokens = significantTokens(query);
-  const titleTokens = new Set(significantTokens(track.trackName));
-  const artistTokens = new Set(significantTokens(track.artistName));
-  const extraTokens = queryTokens.filter(token => !titleTokens.has(token));
-  return extraTokens.length > 0 && extraTokens.every(token => artistTokens.has(token));
+  const normalizedQuery = normalizeSongSearchText(query);
+  const artistTokens = significantTokens(track.artistName);
+  return artistTokens.length > 0 && includesAllTokens(normalizedQuery, artistTokens);
 };
 
 const hasUnmatchedQualifier = (query: string, track: LRCLibTrack) => {
@@ -254,10 +269,11 @@ export interface DatabaseSongResult {
 }
 
 export const searchSongDatabase = async (query: string): Promise<DatabaseSongResult | null> => {
-  console.log('[SongDB] Searching LRCLIB for:', query);
+  const lookupQuery = cleanLyricLookupQuery(query) || query;
+  console.log('[SongDB] Searching LRCLIB for:', lookupQuery);
 
   // Step 1: Search LRCLIB
-  const results = await searchLRCLIB(query);
+  const results = await searchLRCLIB(lookupQuery);
   if (results.length === 0) {
     console.log('[SongDB] No LRCLIB results, falling back to AI');
     return null;
@@ -265,7 +281,7 @@ export const searchSongDatabase = async (query: string): Promise<DatabaseSongRes
 
   const scored = results
     .filter(r => !r.instrumental && (r.plainLyrics || r.syncedLyrics))
-    .map(track => ({ track, score: scoreTrackForQuery(query, track) }))
+    .map(track => ({ track, score: scoreTrackForQuery(lookupQuery, track) }))
     .sort((a, b) => b.score - a.score);
 
   const bestScored = scored[0];
@@ -275,18 +291,18 @@ export const searchSongDatabase = async (query: string): Promise<DatabaseSongRes
   }
 
   const best = bestScored.track;
-  const normalizedQuery = normalizeSongSearchText(query);
-  const normalizedBestTitle = normalizeSongSearchText(best.trackName);
-  const exactTitleMatches = scored.filter(({ track }) => normalizeSongSearchText(track.trackName) === normalizedBestTitle).length;
+  const normalizedQuery = normalizeSongSearchText(lookupQuery);
+  const normalizedBestTitle = normalizeSongSearchText(canonicalTrackTitle(best));
+  const exactTitleMatches = scored.filter(({ track }) => normalizeSongSearchText(canonicalTrackTitle(track)) === normalizedBestTitle).length;
   const hasOnlyTitleInQuery = normalizedQuery === normalizedBestTitle || includesAllTokens(normalizedQuery, significantTokens(best.trackName));
   const secondScore = scored[1]?.score || 0;
 
-  if (hasUnmatchedQualifier(query, best)) {
+  if (hasUnmatchedQualifier(lookupQuery, best)) {
     console.log('[SongDB] Best LRCLIB result did not match the requested artist/qualifier, falling back to identity resolution');
     return null;
   }
 
-  if (!hasArtistQualifier(query, best) && hasOnlyTitleInQuery && exactTitleMatches > 1 && bestScored.score - secondScore < 0.2) {
+  if (!hasArtistQualifier(lookupQuery, best) && hasOnlyTitleInQuery && exactTitleMatches > 1 && bestScored.score - secondScore < 0.2) {
     console.log('[SongDB] Exact title is ambiguous in LRCLIB, falling back to AI identity resolution');
     return null;
   }
@@ -295,7 +311,7 @@ export const searchSongDatabase = async (query: string): Promise<DatabaseSongRes
 
   const songResult: DatabaseSongResult = {
     source: 'lrclib',
-    title: best.trackName,
+    title: canonicalTrackTitle(best),
     artist: best.artistName,
     duration: best.duration,
     plainLyrics: best.plainLyrics || undefined,

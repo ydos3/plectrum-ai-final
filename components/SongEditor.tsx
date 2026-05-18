@@ -33,29 +33,75 @@ const MUSICIAN_QUOTES = [
 ];
 
 type PracticeSkillLevel = 'Beginner' | 'Intermediate' | 'Advanced';
+const SONG_EDITOR_DRAFT_KEY = 'plectrum_song_editor_draft_v1';
+
+type SongEditorDraft = {
+    mode: 'new' | 'edit';
+    songId?: string;
+    title: string;
+    artist: string;
+    movie: string;
+    releaseDate: string;
+    content: string;
+    key: string;
+    capo: number | string;
+    rhythm: string;
+    recommendedKey: string;
+    difficulty: string;
+    practiceTips: string[];
+    chordSimplifications: Song['chordSimplifications'];
+    karaokeUrl: string;
+    timedLyrics?: Song['timedLyrics'];
+    durationStr: string;
+    practiceSkillLevel: PracticeSkillLevel;
+};
 
 const normalizeSkillLevel = (level?: SkillLevel): PracticeSkillLevel => (
     level === 'Beginner' || level === 'Intermediate' ? level : 'Advanced'
 );
 
+const readEditorDraft = (songToEdit?: Song): SongEditorDraft | null => {
+    try {
+        const raw = localStorage.getItem(SONG_EDITOR_DRAFT_KEY);
+        if (!raw) return null;
+        const draft = JSON.parse(raw) as SongEditorDraft;
+        const expectedMode = songToEdit ? 'edit' : 'new';
+        if (draft.mode !== expectedMode) return null;
+        if (songToEdit && String(draft.songId) !== String(songToEdit.id)) return null;
+        return draft;
+    } catch {
+        return null;
+    }
+};
+
+const clearEditorDraft = () => {
+    try {
+        localStorage.removeItem(SONG_EDITOR_DRAFT_KEY);
+    } catch {
+        // Draft persistence is best-effort only.
+    }
+};
+
 const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, initialContent, selectedLanguage = 'English' as AppLanguage, userSkillLevel }) => {
+    const initialDraftRef = useRef<SongEditorDraft | null>(readEditorDraft(songToEdit));
+
     // Metadata State
-    const [title, setTitle] = useState(songToEdit?.title || '');
-    const [artist, setArtist] = useState(songToEdit?.artist || '');
-    const [movie, setMovie] = useState(songToEdit?.movie || '');
-    const [releaseDate, setReleaseDate] = useState(songToEdit?.releaseDate || '');
+    const [title, setTitle] = useState(initialDraftRef.current?.title ?? songToEdit?.title ?? '');
+    const [artist, setArtist] = useState(initialDraftRef.current?.artist ?? songToEdit?.artist ?? '');
+    const [movie, setMovie] = useState(initialDraftRef.current?.movie ?? songToEdit?.movie ?? '');
+    const [releaseDate, setReleaseDate] = useState(initialDraftRef.current?.releaseDate ?? songToEdit?.releaseDate ?? '');
 
     // Musical State
-    const [content, setContent] = useState(songToEdit?.content || initialContent || '');
-    const [key, setKey] = useState(songToEdit?.key || '');
-    const [capo, setCapo] = useState<number | string>(songToEdit?.capo || '');
-    const [rhythm, setRhythm] = useState(songToEdit?.strummingPattern || '');
-    const [recommendedKey, setRecommendedKey] = useState(songToEdit?.recommendedKey || '');
-    const [difficulty, setDifficulty] = useState(songToEdit?.difficulty || '');
-    const [practiceTips, setPracticeTips] = useState<string[]>(songToEdit?.practiceTips || []);
-    const [chordSimplifications, setChordSimplifications] = useState(songToEdit?.chordSimplifications || []);
-    const [karaokeUrl, setKaraokeUrl] = useState(songToEdit?.karaokeUrl || '');
-    const [timedLyrics, setTimedLyrics] = useState<Song['timedLyrics']>(songToEdit?.timedLyrics);
+    const [content, setContent] = useState(initialDraftRef.current?.content ?? songToEdit?.content ?? initialContent ?? '');
+    const [key, setKey] = useState(initialDraftRef.current?.key ?? songToEdit?.key ?? '');
+    const [capo, setCapo] = useState<number | string>(initialDraftRef.current?.capo ?? songToEdit?.capo ?? '');
+    const [rhythm, setRhythm] = useState(initialDraftRef.current?.rhythm ?? songToEdit?.strummingPattern ?? '');
+    const [recommendedKey, setRecommendedKey] = useState(initialDraftRef.current?.recommendedKey ?? songToEdit?.recommendedKey ?? '');
+    const [difficulty, setDifficulty] = useState(initialDraftRef.current?.difficulty ?? songToEdit?.difficulty ?? '');
+    const [practiceTips, setPracticeTips] = useState<string[]>(initialDraftRef.current?.practiceTips ?? songToEdit?.practiceTips ?? []);
+    const [chordSimplifications, setChordSimplifications] = useState(initialDraftRef.current?.chordSimplifications ?? songToEdit?.chordSimplifications ?? []);
+    const [karaokeUrl, setKaraokeUrl] = useState(initialDraftRef.current?.karaokeUrl ?? songToEdit?.karaokeUrl ?? '');
+    const [timedLyrics, setTimedLyrics] = useState<Song['timedLyrics']>(initialDraftRef.current?.timedLyrics ?? songToEdit?.timedLyrics);
     const [showPreviewPlayer, setShowPreviewPlayer] = useState(false);
 
     // UI State
@@ -69,7 +115,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
         return `${m}:${s.toString().padStart(2, '0')}`;
     };
 
-    const [durationStr, setDurationStr] = useState(formatTime(songToEdit?.duration));
+    const [durationStr, setDurationStr] = useState(initialDraftRef.current?.durationStr ?? formatTime(songToEdit?.duration));
 
     // AI State
     const [isAiListening, setIsAiListening] = useState(false);
@@ -83,7 +129,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
     const [magicInput, setMagicInput] = useState('');
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [showSuggestionsDropdown, setShowSuggestionsDropdown] = useState(false);
-    const [practiceSkillLevel, setPracticeSkillLevel] = useState<PracticeSkillLevel>(() => normalizeSkillLevel(userSkillLevel));
+    const [practiceSkillLevel, setPracticeSkillLevel] = useState<PracticeSkillLevel>(() => initialDraftRef.current?.practiceSkillLevel ?? normalizeSkillLevel(userSkillLevel));
 
     // New Mashup State
     const [mashupDetected, setMashupDetected] = useState(false);
@@ -95,9 +141,32 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
 
     // RESET LOGIC
     useEffect(() => {
+        const draft = readEditorDraft(songToEdit);
+        if (draft) {
+            setTitle(draft.title);
+            setArtist(draft.artist);
+            setMovie(draft.movie);
+            setReleaseDate(draft.releaseDate);
+            setContent(draft.content);
+            setKey(draft.key);
+            setCapo(draft.capo);
+            setRhythm(draft.rhythm);
+            setRecommendedKey(draft.recommendedKey);
+            setDifficulty(draft.difficulty);
+            setPracticeTips(draft.practiceTips || []);
+            setChordSimplifications(draft.chordSimplifications || []);
+            setDurationStr(draft.durationStr);
+            setKaraokeUrl(draft.karaokeUrl);
+            setTimedLyrics(draft.timedLyrics);
+            setPracticeSkillLevel(draft.practiceSkillLevel);
+            return;
+        }
+
         if (!songToEdit) {
             setTitle('');
             setArtist('');
+            setMovie('');
+            setReleaseDate('');
             setContent(initialContent || '');
             setKey('');
             setCapo('');
@@ -125,6 +194,35 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             setTimedLyrics(songToEdit.timedLyrics);
         }
     }, [songToEdit, initialContent]);
+
+    useEffect(() => {
+        if (!title && !artist && !content && !magicInput) return;
+        const timeout = window.setTimeout(() => {
+            const draft: SongEditorDraft = {
+                mode: songToEdit ? 'edit' : 'new',
+                songId: songToEdit?.id,
+                title,
+                artist,
+                movie,
+                releaseDate,
+                content,
+                key,
+                capo,
+                rhythm,
+                recommendedKey,
+                difficulty,
+                practiceTips,
+                chordSimplifications,
+                karaokeUrl,
+                timedLyrics,
+                durationStr,
+                practiceSkillLevel,
+            };
+            localStorage.setItem(SONG_EDITOR_DRAFT_KEY, JSON.stringify(draft));
+        }, 300);
+
+        return () => window.clearTimeout(timeout);
+    }, [songToEdit?.id, title, artist, movie, releaseDate, content, key, capo, rhythm, recommendedKey, difficulty, practiceTips, chordSimplifications, karaokeUrl, timedLyrics, durationStr, practiceSkillLevel, magicInput]);
 
     useEffect(() => {
         if (!songToEdit) setPracticeSkillLevel(normalizeSkillLevel(userSkillLevel));
@@ -398,7 +496,13 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             createdAt: songToEdit?.createdAt || Date.now(),
         };
         saveSong(newSong);
+        clearEditorDraft();
         onSave();
+    };
+
+    const handleCancel = () => {
+        clearEditorDraft();
+        onCancel();
     };
 
     return (
@@ -478,7 +582,7 @@ const SongEditor: React.FC<SongEditorProps> = ({ songToEdit, onSave, onCancel, i
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 md:px-6 py-3 md:py-4 border-b border-[#5d4037] bg-[#1a0f0a]/50 backdrop-blur-md z-10 shrink-0 shadow-md">
                 <div className="flex items-center gap-2 md:gap-4 min-w-0">
-                    <button onClick={onCancel} className="p-2 hover:bg-white/10 rounded-lg text-amber-200/60 hover:text-white transition-colors">
+                    <button onClick={handleCancel} className="p-2 hover:bg-white/10 rounded-lg text-amber-200/60 hover:text-white transition-colors">
                         <ArrowLeft className="w-5 h-5" />
                     </button>
                     <div className="flex items-center gap-3 min-w-0">

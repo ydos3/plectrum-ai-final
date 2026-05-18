@@ -1,9 +1,9 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, StopCircle, Mic, Play, Pause, Trash2, Download, Video, List, X, Loader2, Settings2, Music, Minus, Plus, GripVertical, GripHorizontal, EyeOff, Sparkles, Sliders, Wand2, Monitor, ChevronDown, ChevronUp, Sun, ArrowLeft } from 'lucide-react';
+import { Camera, StopCircle, Mic, Play, Pause, Trash2, Download, Video, List, X, Loader2, Settings2, Music, Minus, Plus, GripVertical, GripHorizontal, EyeOff, Sparkles, Sliders, Wand2, Monitor, ChevronDown, ChevronUp, Sun, ArrowLeft, Eye } from 'lucide-react';
 import { Song } from '../types';
 import { getSongs } from '../services/storageService';
-import { saveRecording, getRecordings, deleteRecording, Recording } from '../services/recordingDb';
+import { saveRecording, getRecordings, deleteRecording, Recording, MAX_LOCAL_RECORDINGS, RecordingQuotaError } from '../services/recordingDb';
 
 interface PracticeRoomProps {
     isTourMode?: boolean;
@@ -59,6 +59,8 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
   const [isRecording, setIsRecording] = useState(false);
   const [timer, setTimer] = useState(0);
   const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [previewRecording, setPreviewRecording] = useState<Recording | null>(null);
+  const [previewUrl, setPreviewUrl] = useState('');
   const [selectedSong, setSelectedSong] = useState<Song | null>(() => resolveInitialSong(initialSong));
   const [showSongSelector, setShowSongSelector] = useState(false);
   
@@ -119,6 +121,17 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
       if (lyricsRef.current) lyricsRef.current.scrollTop = 0;
       setIsScrolling(false);
   }, [selectedSong?.id]);
+
+  useEffect(() => {
+      if (!previewRecording) {
+          setPreviewUrl('');
+          return;
+      }
+
+      const url = URL.createObjectURL(previewRecording.blob);
+      setPreviewUrl(url);
+      return () => URL.revokeObjectURL(url);
+  }, [previewRecording]);
 
   // Canvas Drawing Loop (The Magic for Filters)
   useEffect(() => {
@@ -491,8 +504,15 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
       }
   };
 
-  const startRecording = () => {
+  const startRecording = async () => {
     if (!stream || !canvasRef.current) return;
+    const latestRecordings = await getRecordings();
+    if (latestRecordings.length >= MAX_LOCAL_RECORDINGS) {
+      setRecordings(latestRecordings.sort((a, b) => b.createdAt - a.createdAt));
+      setIsVaultOpen(true);
+      alert(`Local recording storage is full (${MAX_LOCAL_RECORDINGS}/${MAX_LOCAL_RECORDINGS}). Delete a recording before saving a new take.`);
+      return;
+    }
     
     // Capture stream from CANVAS (Video + Filters, but NO Ring Light overlay)
     const canvasStream = canvasRef.current.captureStream(30); // 30 FPS
@@ -539,8 +559,21 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
         duration: timer,
         songTitle: selectedSong?.title || 'Freestyle Session'
       };
-      await saveRecording(newRecording);
-      setRecordings(prev => [newRecording, ...prev]);
+      try {
+        await saveRecording(newRecording);
+        await loadRecordings();
+        setPreviewRecording(newRecording);
+        setIsVaultOpen(true);
+      } catch (error) {
+        if (error instanceof RecordingQuotaError || String((error as Error)?.message || error).toLowerCase().includes('recording limit')) {
+          await loadRecordings();
+          setIsVaultOpen(true);
+          alert(`Local recording storage is full (${MAX_LOCAL_RECORDINGS}/${MAX_LOCAL_RECORDINGS}). Delete a recording before saving a new take.`);
+        } else {
+          alert('Could not save this recording. Please try again.');
+          if (import.meta.env.DEV) console.warn('Recording save failed', error);
+        }
+      }
       setTimer(0);
       cleanupRecordingAudio();
     };
@@ -568,6 +601,7 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
     if (window.confirm("Delete this recording?")) {
       await deleteRecording(id);
       setRecordings(prev => prev.filter(r => r.id !== id));
+      if (previewRecording?.id === id) setPreviewRecording(null);
     }
   };
 
@@ -817,7 +851,13 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
 
         <div className="h-16 sm:h-20 lg:h-24 bg-gradient-to-t from-[#0a0503] to-[#1a0f0a] border-t border-[#3e2723] flex items-center justify-center gap-4 sm:gap-8 relative z-30 shadow-[0_-10px_40px_rgba(0,0,0,0.6)] shrink-0">
              {!isRecording ? (
-                 <button id="tour-record-btn" onClick={startRecording} disabled={isTourMode} className="w-14 h-14 lg:w-16 lg:h-16 rounded-full bg-red-600 hover:bg-red-500 border-4 border-red-800 shadow-[0_0_40px_rgba(220,38,38,0.5)] flex items-center justify-center transition-all active:scale-90 hover:scale-110 group disabled:opacity-50 disabled:cursor-not-allowed"><div className="w-5 h-5 lg:w-6 lg:h-6 bg-white rounded-full group-hover:scale-90 transition-transform"></div></button>
+                 <button
+                   id="tour-record-btn"
+                   onClick={startRecording}
+                   disabled={isTourMode || recordings.length >= MAX_LOCAL_RECORDINGS}
+                   title={recordings.length >= MAX_LOCAL_RECORDINGS ? `Delete a recording to save a new take (${MAX_LOCAL_RECORDINGS}/${MAX_LOCAL_RECORDINGS} used)` : 'Start recording'}
+                   className="w-14 h-14 lg:w-16 lg:h-16 rounded-full bg-red-600 hover:bg-red-500 border-4 border-red-800 shadow-[0_0_40px_rgba(220,38,38,0.5)] flex items-center justify-center transition-all active:scale-90 hover:scale-110 group disabled:opacity-50 disabled:cursor-not-allowed"
+                 ><div className="w-5 h-5 lg:w-6 lg:h-6 bg-white rounded-full group-hover:scale-90 transition-transform"></div></button>
              ) : (
                  <button onClick={stopRecording} className="w-14 h-14 lg:w-16 lg:h-16 rounded-full bg-slate-800 border-4 border-red-500 flex items-center justify-center transition-all active:scale-90 hover:scale-110 shadow-[0_0_30px_rgba(239,68,68,0.3)]"><div className="w-5 h-5 lg:w-6 lg:h-6 bg-red-500 rounded-sm"></div></button>
              )}
@@ -898,14 +938,17 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
               )}
           </div>
 
-          {/* Collapsible Session Vault */}
-          <div className={`transition-all duration-300 border-t border-[#3e2723] bg-[#120b08] flex flex-col shadow-inner shrink-0 ${isVaultOpen ? 'h-32 md:h-48' : 'h-8'}`}>
+          {/* Collapsible Practice Recordings */}
+          <div className={`transition-all duration-300 border-t border-[#3e2723] bg-[#120b08] flex flex-col shadow-inner shrink-0 ${isVaultOpen ? 'h-44 md:h-60' : 'h-11'}`}>
              <div 
-                className="p-1.5 border-b border-[#3e2723] bg-[#1a0f0a] flex items-center justify-between cursor-pointer hover:bg-[#221511] transition-colors"
+                className="px-3 py-2 border-b border-[#3e2723] bg-[#1a0f0a] flex items-center justify-between cursor-pointer hover:bg-[#221511] transition-colors"
                 onClick={() => setIsVaultOpen(!isVaultOpen)}
              >
-                 <span className="text-[9px] font-black text-amber-800 uppercase tracking-[0.25em]">Vault</span>
-                 {isVaultOpen ? <ChevronDown className="w-3 h-3 text-amber-800" /> : <ChevronUp className="w-3 h-3 text-amber-800" />}
+                 <div className="min-w-0">
+                     <div className="text-[10px] font-black text-amber-500 uppercase tracking-[0.2em]">Practice Recordings</div>
+                     <div className="text-[9px] text-amber-800/90 font-bold truncate">Preview or download saved takes • {recordings.length}/{MAX_LOCAL_RECORDINGS} stored locally</div>
+                 </div>
+                 {isVaultOpen ? <ChevronDown className="w-4 h-4 text-amber-700 shrink-0" /> : <ChevronUp className="w-4 h-4 text-amber-700 shrink-0" />}
              </div>
              
              {isVaultOpen && (
@@ -917,16 +960,40 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
                                  <div className="text-[8px] text-amber-900 font-bold uppercase">{new Date(rec.createdAt).toLocaleDateString()} • {formatTime(rec.duration)}</div>
                              </div>
                              <div className="flex gap-1">
-                                 <button onClick={() => handleDownload(rec)} className="p-1 text-amber-600 hover:text-white"><Download className="w-3 h-3" /></button>
-                                 <button onClick={() => handleDelete(rec.id)} className="p-1 text-red-900 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
+                                 <button onClick={() => setPreviewRecording(rec)} className="p-1.5 text-sky-400/80 hover:text-white rounded-md hover:bg-white/5" title="Preview recording"><Eye className="w-3.5 h-3.5" /></button>
+                                 <button onClick={() => handleDownload(rec)} className="p-1.5 text-amber-500 hover:text-white rounded-md hover:bg-white/5" title="Download recording"><Download className="w-3.5 h-3.5" /></button>
+                                 <button onClick={() => handleDelete(rec.id)} className="p-1.5 text-red-900 hover:text-red-500 rounded-md hover:bg-white/5" title="Delete recording"><Trash2 className="w-3.5 h-3.5" /></button>
                              </div>
                          </div>
                      ))}
-                     {recordings.length === 0 && <p className="text-[9px] text-amber-900/40 text-center italic mt-2">No recordings.</p>}
+                     {recordings.length === 0 && <p className="text-[10px] text-amber-900/60 text-center italic mt-4">No saved practice takes yet. Record once, then preview and download it here.</p>}
                  </div>
              )}
           </div>
       </div>
+
+      {previewRecording && (
+          <div className="absolute inset-0 z-[70] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4" onClick={() => setPreviewRecording(null)}>
+              <div className="w-full max-w-3xl bg-[#120b08] border border-[#5d4037] rounded-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                  <div className="p-4 bg-[#1a0f0a] border-b border-[#3e2723] flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                          <h3 className="text-sm font-black text-amber-100 uppercase tracking-[0.18em] truncate">Preview Recording</h3>
+                          <p className="text-[10px] text-amber-700 font-bold truncate">{previewRecording.songTitle || 'Practice Take'} • {formatTime(previewRecording.duration)}</p>
+                      </div>
+                      <button onClick={() => setPreviewRecording(null)} className="p-2 text-amber-600 hover:text-white rounded-lg hover:bg-white/5 transition-colors"><X className="w-5 h-5" /></button>
+                  </div>
+                  <div className="bg-black">
+                      {previewUrl && (
+                          <video src={previewUrl} controls playsInline className="w-full max-h-[70vh] bg-black" />
+                      )}
+                  </div>
+                  <div className="p-4 bg-[#1a0f0a] border-t border-[#3e2723] flex justify-end gap-3">
+                      <button onClick={() => setPreviewRecording(null)} className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-amber-200 text-xs font-black uppercase tracking-widest transition-colors">Close</button>
+                      <button onClick={() => handleDownload(previewRecording)} className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black uppercase tracking-widest transition-colors flex items-center gap-2"><Download className="w-4 h-4" /> Download</button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {showSongSelector && (
           <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-xl flex items-center justify-center p-4">

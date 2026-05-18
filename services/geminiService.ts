@@ -31,7 +31,7 @@ const MODELS = {
 const ENABLE_SONG_DATABASE_LOOKUPS = true;
 const REPAIRED_CACHE_KEY = 'plectrum_repaired_song_cache_v1';
 const NORMALIZED_SONG_CACHE_KEY = 'plectrum_normalized_song_cache_v1';
-const REPAIRED_CACHE_VERSION = 1;
+const REPAIRED_CACHE_VERSION = 2;
 const generationMemoryCache = new Map<string, any>();
 const pendingGenerationRequests = new Map<string, Promise<any>>();
 
@@ -108,8 +108,20 @@ async function retryWithBackoff<T>(
 
 // ─── Core API Call ────────────────────────────────────────────────────
 
+const getClientUserId = () => {
+  try {
+    if (typeof localStorage === 'undefined') return '';
+    const raw = localStorage.getItem('plexdrum_user_v2');
+    if (!raw) return '';
+    const user = JSON.parse(raw);
+    return typeof user?.id === 'string' ? user.id : '';
+  } catch {
+    return '';
+  }
+};
+
 const callGeminiApi = async (model: string, contents: any[], config: any = {}) => {
-  const { requestTimeoutMs, ...generationConfigInput } = config || {};
+  const { requestTimeoutMs, rateLimitScope, ...generationConfigInput } = config || {};
   const controller = new AbortController();
   const timeoutMs = requestTimeoutMs || (model === MODELS.PRO ? 30000 : 90000);
   const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
@@ -131,6 +143,7 @@ const callGeminiApi = async (model: string, contents: any[], config: any = {}) =
       body: JSON.stringify({
         model,
         contents,
+        ...(rateLimitScope ? { rateLimitScope, clientUserId: getClientUserId() } : {}),
         generationConfig: {
           candidateCount: 1,
           temperature: 0.2,
@@ -564,10 +577,19 @@ const stripGenerationDirectives = (query: string) => (
   query
     .replace(/\([^)]*(?:open chords?|barre chords?|capo|beginner|easy|easier)[^)]*\)/gi, ' ')
     .replace(/\s+-\s+make\s+this\s+song.*$/i, ' ')
+    .replace(/\b(?:please|pls|give|show|find|fetch|get|make|create|generate)\s+(?:me\s+)?(?:the\s+)?/gi, ' ')
+    .replace(/\b(?:lyrics?|lyrical|chords?|tabs?|guitar|karaoke|official|audio|video|version)\b/gi, ' ')
     .replace(/\b(?:use|with)\s+(?:open|barre)\s+chords?\b/gi, ' ')
     .replace(/\b(?:beginner|easy|easier|capo suggestions?)\b/gi, ' ')
     .trim()
 );
+
+const verifiedLyricsUnavailableMessage = (query: string, identity?: SongIdentityResolution | null) => {
+  const identityText = identity?.title && identity.artist
+    ? `"${identity.title}" by ${identity.artist}`
+    : `"${stripGenerationDirectives(query) || query}"`;
+  return `I could not find verified lyrics for ${identityText}. I will not generate or merge fake lyrics. Add the artist name, paste the lyrics you want chorded, or try another exact title.`;
+};
 
 const hasHighConfidenceIdentity = (identity?: SongIdentityResolution | null) => (
   !!identity &&
@@ -705,6 +727,42 @@ const sameIdentity = (actual: any, expected?: SongIdentityResolution | null) => 
   return titleMatches && artistMatches;
 };
 
+const lyricLinesOnly = (value: string) => (
+  value
+    .split(/\r?\n/)
+    .map(line => line.replace(/\[[^\]]+\]/g, '').replace(/^#+\s*\[[^\]]+\]\s*/g, '').trim())
+    .filter(line => line && !/^#+/.test(line))
+);
+
+const lyricTokensForComparison = (value: string) => (
+  normalizeSongSearchText(lyricLinesOnly(value).join(' '))
+    .split(' ')
+    .filter(token => token.length > 2)
+);
+
+const assertVerifiedLyricsPreserved = (
+  sourceLyrics: string,
+  candidateContent: string,
+  language: AppLanguage
+) => {
+  const sourceLines = lyricLinesOnly(sourceLyrics);
+  const candidateLines = lyricLinesOnly(candidateContent);
+  if (sourceLines.length >= 8 && candidateLines.length < Math.floor(sourceLines.length * 0.55)) {
+    throw new Error('Chord pass dropped too many verified lyric lines.');
+  }
+
+  if (language !== 'English') return;
+
+  const sourceTokens = Array.from(new Set(lyricTokensForComparison(sourceLyrics)));
+  const candidateTokens = new Set(lyricTokensForComparison(candidateContent));
+  if (sourceTokens.length < 12) return;
+
+  const overlap = sourceTokens.filter(token => candidateTokens.has(token)).length / sourceTokens.length;
+  if (overlap < 0.65) {
+    throw new Error('Chord pass rewrote or merged the verified lyrics.');
+  }
+};
+
 const identifySongFromQuery = async (query: string, language: AppLanguage): Promise<SongIdentityResolution | null> => {
   const prompt = `Identify the exact real song requested by this user input.
 
@@ -836,6 +894,7 @@ ${lyrics}`;
 
     const responseText = await retryWithBackoff(async () => {
       return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
+        rateLimitScope: 'song-generation',
         responseMimeType: "application/json",
         temperature: 0.15,
         maxOutputTokens: 8192
@@ -953,6 +1012,7 @@ REPAIR RULES:
 
   const responseText = await retryWithBackoff(async () => (
     await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
+      rateLimitScope: 'song-generation',
       responseMimeType: 'application/json',
       temperature: 0.12,
       maxOutputTokens: 8192,
@@ -1227,6 +1287,7 @@ ${dbResult.plainLyrics}`;
 
       const chordResponse = await retryWithBackoff(async () => {
         return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: chordPrompt }] }], {
+          rateLimitScope: 'song-generation',
           responseMimeType: "application/json",
           temperature: 0.1,
           maxOutputTokens: 8192
@@ -1237,6 +1298,7 @@ ${dbResult.plainLyrics}`;
       if (!hasChordedContent(chordData.content)) {
         throw new Error('Gemini response did not include playable chorded content.');
       }
+      assertVerifiedLyricsPreserved(dbResult.plainLyrics, chordData.content, language);
 
       const candidate = {
         title: dbResult.title,
@@ -1296,6 +1358,7 @@ ${dbResult.plainLyrics}`;
         if (!hasChordedContent(fallbackData.content)) {
           throw new Error('Gemini fallback response did not include playable chorded content.');
         }
+        assertVerifiedLyricsPreserved(dbResult.plainLyrics, fallbackData.content, language);
 
         const compactCandidate = {
           title: dbResult.title,
@@ -1341,16 +1404,14 @@ ${dbResult.plainLyrics}`;
     }
   }
 
-  if (!mashupMode && !hasHighConfidenceIdentity(verifiedIdentity)) {
-    console.warn(`[SongGen] Low confidence identity for "${query}", trying Gemini generation anyway...`);
+  if (!mashupMode) {
+    throw new Error(verifiedLyricsUnavailableMessage(query, verifiedIdentity));
   }
 
-  if (!mashupMode && verifiedIdentity?.title && verifiedIdentity.artist) {
-    console.log(`[SongGen] Verified identity "${verifiedIdentity.title}" for "${query}", but no DB lyrics. Asking Gemini to generate...`);
-  }
-
-  // STEP 2: Full AI generation with Gemini Pro, guarded by exact identity checks.
-  console.log('[SongGen] No DB hit, using Gemini Pro for:', query);
+  // STEP 2: Mashups/original creative requests can still use Gemini. Real song
+  // requests above must come from verified lyrics, so we never fabricate a chart
+  // for a released song after LRCLIB/local lookup misses.
+  console.log('[SongGen] Creative mashup request, using Gemini Pro for:', query);
 
   try {
     const langInstruction = language === 'English' ? "English/Roman" : `${language} (${LANGUAGE_SCRIPT_HINTS[language] || 'selected script'})`;
@@ -1424,6 +1485,7 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
 
     const responseText = await retryWithBackoff(async () => {
       return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
+        rateLimitScope: 'song-generation',
         responseMimeType: "application/json",
         temperature: 0.1,
         maxOutputTokens: 8192
@@ -1526,6 +1588,7 @@ OUTPUT FORMAT (strict JSON):
 
     const responseText = await retryWithBackoff(async () => {
       return await callGeminiApiWithFallback(MODELS.PRO, [{ role: 'user', parts: [{ text: prompt }] }], {
+        rateLimitScope: 'song-generation',
         responseMimeType: "application/json",
         maxOutputTokens: 8192
       });

@@ -58,7 +58,8 @@ const ImageAnalyzer: React.FC<ImageAnalyzerProps> = ({ onCreateFromAnalysis, onB
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full p-6 max-w-3xl mx-auto w-full relative">
+    <div className="h-full w-full overflow-y-auto px-4 py-6 md:p-6">
+      <div className="flex flex-col items-center justify-start min-h-full max-w-3xl mx-auto w-full relative pb-10">
       {onBack && (
           <button onClick={onBack} className="absolute top-6 left-4 md:left-0 p-2 hover:bg-white/10 rounded-lg text-amber-200/60 hover:text-white transition-colors">
             <ArrowLeft className="w-6 h-6" />
@@ -71,7 +72,7 @@ const ImageAnalyzer: React.FC<ImageAnalyzerProps> = ({ onCreateFromAnalysis, onB
           <p className="text-amber-500/60 text-sm">Upload a photo of handwritten notes or chord charts to digitize them instantly.</p>
         </div>
 
-        <div className="p-8">
+        <div className="p-5 md:p-8">
           {!selectedImage ? (
             <div 
               onClick={() => fileInputRef.current?.click()}
@@ -92,7 +93,7 @@ const ImageAnalyzer: React.FC<ImageAnalyzerProps> = ({ onCreateFromAnalysis, onB
             </div>
           ) : (
             <div className="space-y-6">
-              <div className="relative rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center shadow-inner border border-[#3e2723]">
+              <div className="relative rounded-xl overflow-hidden bg-black h-[34vh] min-h-56 max-h-80 flex items-center justify-center shadow-inner border border-[#3e2723]">
                 <img src={selectedImage} alt="Preview" className="max-h-full max-w-full object-contain" />
                 <button 
                   onClick={() => { setSelectedImage(null); setResult(null); }}
@@ -146,7 +147,7 @@ const ImageAnalyzer: React.FC<ImageAnalyzerProps> = ({ onCreateFromAnalysis, onB
                 <span className="font-bold">Scan Complete</span>
               </div>
               
-              <div className="bg-[#0a0503] rounded-xl p-4 border border-[#3e2723] font-mono text-sm text-amber-200/80 max-h-60 overflow-y-auto whitespace-pre-wrap shadow-inner">
+              <div className="bg-[#0a0503] rounded-xl p-4 border border-[#3e2723] font-mono text-sm text-amber-200/80 max-h-[42vh] min-h-40 overflow-y-auto whitespace-pre-wrap shadow-inner custom-scrollbar">
                 {result}
               </div>
 
@@ -160,6 +161,7 @@ const ImageAnalyzer: React.FC<ImageAnalyzerProps> = ({ onCreateFromAnalysis, onB
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

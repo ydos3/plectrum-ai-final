@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Layout from './components/Layout';
 import SongList from './components/SongList';
 import SongEditor from './components/SongEditor';
@@ -38,6 +38,13 @@ type PersistedAppState = {
     showTour?: boolean;
 };
 
+type AppHistoryState = {
+    plectrumApp?: true;
+    currentView?: ViewState;
+    selectedSongId?: string;
+    scannedContent?: string;
+};
+
 const readPersistedAppState = (): PersistedAppState => {
     try {
         return JSON.parse(localStorage.getItem(APP_STATE_KEY) || '{}');
@@ -48,6 +55,10 @@ const readPersistedAppState = (): PersistedAppState => {
 
 const viewNeedsSong = (view?: ViewState) => (
     view === 'TELEPROMPTER' || view === 'FRETBOARD_LAB' || view === 'PRACTICE_ROOM'
+);
+
+const isAppHistoryState = (state: unknown): state is AppHistoryState => (
+    !!state && typeof state === 'object' && (state as AppHistoryState).plectrumApp === true
 );
 
 const App: React.FC = () => {
@@ -71,6 +82,84 @@ const App: React.FC = () => {
     const [showTour, setShowTour] = useState(false);
     const [quoteIndex, setQuoteIndex] = useState(0);
     const [studioName, setStudioName] = useState('Global Studio');
+    const currentViewRef = useRef(currentView);
+    const selectedSongRef = useRef<Song | undefined>(selectedSong);
+    const scannedContentRef = useRef<string | undefined>(scannedContent);
+    const historyReadyRef = useRef(false);
+
+    useEffect(() => {
+        currentViewRef.current = currentView;
+        selectedSongRef.current = selectedSong;
+        scannedContentRef.current = scannedContent;
+    }, [currentView, selectedSong, scannedContent]);
+
+    const buildHistoryState = useCallback((
+        view: ViewState,
+        song?: Song,
+        content?: string
+    ): AppHistoryState => ({
+        plectrumApp: true,
+        currentView: view,
+        selectedSongId: song?.id,
+        scannedContent: content,
+    }), []);
+
+    const applyRouteState = useCallback((routeState: AppHistoryState | PersistedAppState) => {
+        const view = routeState.currentView && routeState.currentView !== 'AUTH'
+            ? routeState.currentView
+            : 'LIBRARY';
+        const songs = getSongs();
+        const restoredSong = routeState.selectedSongId
+            ? songs.find(song => String(song.id) === String(routeState.selectedSongId))
+            : undefined;
+        const restoredView = viewNeedsSong(view) && !restoredSong ? 'LIBRARY' : view;
+
+        setSelectedSong(restoredSong);
+        setScannedContent(routeState.scannedContent);
+        setCurrentView(restoredView);
+    }, []);
+
+    const writeHistoryState = useCallback((
+        mode: 'push' | 'replace',
+        view: ViewState,
+        song?: Song,
+        content?: string
+    ) => {
+        if (typeof window === 'undefined') return;
+        const state = buildHistoryState(view, song, content);
+        const url = window.location.pathname + window.location.search + window.location.hash;
+        if (mode === 'push') {
+            window.history.pushState(state, '', url);
+        } else {
+            window.history.replaceState(state, '', url);
+        }
+    }, [buildHistoryState]);
+
+    const navigateTo = useCallback((
+        view: ViewState,
+        options: {
+            song?: Song;
+            scanned?: string;
+            push?: boolean;
+            clearEditorState?: boolean;
+        } = {}
+    ) => {
+        const shouldClearEditorState = options.clearEditorState ?? view === 'EDITOR';
+        const nextSong = shouldClearEditorState
+            ? undefined
+            : options.song ?? selectedSongRef.current;
+        const nextScanned = shouldClearEditorState
+            ? undefined
+            : options.scanned ?? scannedContentRef.current;
+        const nextView = viewNeedsSong(view) && !nextSong ? 'LIBRARY' : view;
+
+        setSelectedSong(nextSong);
+        setScannedContent(nextScanned);
+        setCurrentView(nextView);
+        if (historyReadyRef.current) {
+            writeHistoryState(options.push === false ? 'replace' : 'push', nextView, nextSong, nextScanned);
+        }
+    }, [writeHistoryState]);
 
     useEffect(() => {
         const timer = setInterval(() => setCurrentTime(new Date()), 60000);
@@ -122,17 +211,43 @@ const App: React.FC = () => {
             setSelectedSong(restoredSong);
             setScannedContent(persistedState.scannedContent);
             setShowTour(Boolean(persistedState.showTour));
-            setCurrentView(viewNeedsSong(restoredView) && !restoredSong ? 'LIBRARY' : restoredView);
+            const safeRestoredView = viewNeedsSong(restoredView) && !restoredSong ? 'LIBRARY' : restoredView;
+            setCurrentView(safeRestoredView);
+            writeHistoryState('replace', safeRestoredView, restoredSong, persistedState.scannedContent);
+            historyReadyRef.current = true;
         } else {
             setCurrentView('AUTH');
             setAuthStep('LANDING');
+            writeHistoryState('replace', 'AUTH');
+            historyReadyRef.current = true;
         }
 
         return () => {
             clearInterval(timer);
             clearInterval(quoteTimer);
         }
-    }, []);
+    }, [writeHistoryState]);
+
+    useEffect(() => {
+        const handlePopState = (event: PopStateEvent) => {
+            if (isAppHistoryState(event.state)) {
+                applyRouteState(event.state);
+                return;
+            }
+
+            const persistedState = readPersistedAppState();
+            applyRouteState(persistedState);
+            writeHistoryState(
+                'replace',
+                currentViewRef.current || 'LIBRARY',
+                selectedSongRef.current,
+                scannedContentRef.current
+            );
+        };
+
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, [applyRouteState, writeHistoryState]);
 
     useEffect(() => {
         if (!currentUser) return;
@@ -151,11 +266,7 @@ const App: React.FC = () => {
     };
 
     const handleChangeView = (view: ViewState) => {
-        if (view === 'EDITOR') {
-            setSelectedSong(undefined);
-            setScannedContent(undefined);
-        }
-        setCurrentView(view);
+        navigateTo(view);
     };
 
     const handleGlobalClick = (e: React.MouseEvent | React.TouchEvent) => {
@@ -191,12 +302,12 @@ const App: React.FC = () => {
         if (authSkill) {
             const user = await login(authName, authSkill);
             setCurrentUser(user);
-            setCurrentView('LIBRARY');
+            navigateTo('LIBRARY', { push: false });
             setShowTour(true);
         }
     };
 
-    const goBack = () => setCurrentView('LIBRARY');
+    const goBack = () => navigateTo('LIBRARY', { push: false, clearEditorState: false });
 
     return (
         <div onClick={handleGlobalClick} onTouchStart={handleGlobalClick} className="h-[100dvh] w-full relative overflow-hidden bg-[#1a0f0a]">
@@ -367,17 +478,17 @@ const App: React.FC = () => {
                 >
                     {currentView === 'LIBRARY' && (
                         <SongList
-                            onEdit={(s) => { setSelectedSong(s); setCurrentView('EDITOR'); }}
-                            onPlay={(s) => { setSelectedSong(s); setCurrentView('TELEPROMPTER'); }}
-                            onOpenLab={(s) => { setSelectedSong(s); setCurrentView('FRETBOARD_LAB'); }}
-                            onOpenPractice={(s) => { setSelectedSong(s); setCurrentView('PRACTICE_ROOM'); }}
-                            onCreateNew={() => { setSelectedSong(undefined); setCurrentView('EDITOR'); }}
+                            onEdit={(s) => navigateTo('EDITOR', { song: s, clearEditorState: false })}
+                            onPlay={(s) => navigateTo('TELEPROMPTER', { song: s, clearEditorState: false })}
+                            onOpenLab={(s) => navigateTo('FRETBOARD_LAB', { song: s, clearEditorState: false })}
+                            onOpenPractice={(s) => navigateTo('PRACTICE_ROOM', { song: s, clearEditorState: false })}
+                            onCreateNew={() => navigateTo('EDITOR', { clearEditorState: true })}
                         />
                     )}
                     {currentView === 'EDITOR' && <SongEditor songToEdit={selectedSong} onSave={goBack} onCancel={goBack} initialContent={scannedContent} selectedLanguage={selectedLanguage} userSkillLevel={currentUser?.skillLevel} />}
                     {currentView === 'TELEPROMPTER' && selectedSong && <Teleprompter song={selectedSong} onClose={goBack} />}
                     {currentView === 'CHAT' && <AIChat onClose={goBack} />}
-                    {currentView === 'ANALYZER' && <ImageAnalyzer onCreateFromAnalysis={(c) => { setScannedContent(c); setCurrentView('EDITOR'); }} onBack={goBack} />}
+                    {currentView === 'ANALYZER' && <ImageAnalyzer onCreateFromAnalysis={(c) => navigateTo('EDITOR', { scanned: c, clearEditorState: false })} onBack={goBack} />}
                     {currentView === 'CHORD_TRAINER' && <ChordTrainer onBack={goBack} />}
                     {currentView === 'FRETBOARD_LAB' && <FretboardLab initialSong={selectedSong} onBack={goBack} />}
                     {currentView === 'PRACTICE_ROOM' && (
