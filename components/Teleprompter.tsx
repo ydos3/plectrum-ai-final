@@ -13,6 +13,10 @@ interface TeleprompterProps {
 }
 
 const TELEPROMPTER_STATE_KEY = 'plectrum_teleprompter_state_v1';
+const DEFAULT_OFFICIAL_SONG_DURATION_SECONDS = 240;
+const MIN_PERFORMANCE_DURATION_SECONDS = 210;
+const MIN_PLAYBACK_SPEED = 0.05;
+const MAX_PLAYBACK_SPEED = 2;
 
 type SourceStep = {
   level: number;
@@ -101,17 +105,24 @@ const estimateDurationFromLyrics = (content: string) => {
     .map(line => line.replace(/\[.*?\]/g, '').replace(/^#+\s*/, '').trim())
     .filter(Boolean);
   const wordCount = lyricLines.join(' ').split(/\s+/).filter(Boolean).length;
-  return Math.max(240, lyricLines.length * 5.5, wordCount * 0.75);
+  return Math.max(
+    DEFAULT_OFFICIAL_SONG_DURATION_SECONDS,
+    lyricLines.length * 7.5,
+    wordCount * 1.15
+  );
 };
 
 const getInitialDuration = (song: Song) => (
-  getSongMetadataDuration(song) || estimateDurationFromLyrics(song.content || '')
+  Math.max(
+    MIN_PERFORMANCE_DURATION_SECONDS,
+    getSongMetadataDuration(song) || estimateDurationFromLyrics(song.content || '')
+  )
 );
 
 const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const persistedState = useRef<PersistedTeleprompterState>(readTeleprompterState());
   const [karaokeEnabled, setKaraokeEnabled] = useState(() => Boolean(persistedState.current.karaokeEnabled));
-  const [playbackSpeed, setPlaybackSpeed] = useState(() => clampNumber(persistedState.current.playbackSpeed, 1, 0.1, 3));
+  const [playbackSpeed, setPlaybackSpeed] = useState(() => clampNumber(persistedState.current.playbackSpeed, 0.75, MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED));
   
   // SPOTIFY-STYLE SCROLL STATE
   const [isPlaying, setIsPlaying] = useState(false);
@@ -255,6 +266,33 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   // ─── Spotify-Style Auto-Scroll Engine ──────────────────────────────
 
+  const getLineWeight = (line: ParsedLine) => {
+    if (line.type === 'lyrics') {
+      const words = line.lyricsOnly.split(/\s+/).filter(Boolean).length;
+      return Math.max(1, Math.min(2.4, 0.8 + (words * 0.16)));
+    }
+
+    const text = line.text.toLowerCase();
+    if (/intro|instrumental|solo|interlude|music/.test(text)) return 3.5;
+    if (/bridge|outro/.test(text)) return 1.3;
+    if (line.type === 'header') return 0.85;
+    return 0.45;
+  };
+
+  const estimateIntroTime = (lines: ParsedLine[], duration: number) => {
+    const firstLyricIdx = lines.findIndex(line => line.type === 'lyrics');
+    const leadingText = lines
+      .slice(0, firstLyricIdx >= 0 ? firstLyricIdx : lines.length)
+      .map(line => line.text.toLowerCase())
+      .join(' ');
+
+    if (/intro|instrumental|solo|music/.test(leadingText)) {
+      return Math.min(34, Math.max(14, duration * 0.1));
+    }
+
+    return Math.min(22, Math.max(10, duration * 0.065));
+  };
+
   const getLineTimings = useCallback((): number[] => {
     const lines = parsedLines.current;
     const totalLyricLines = lines.filter(l => l.type === 'lyrics').length;
@@ -299,25 +337,26 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       });
     }
 
-    // Uniform distribution with section pauses
-    const duration = actualDuration;
-    const introTime = Math.min(duration * 0.04, 8);
-    const outroTime = Math.min(duration * 0.03, 6);
-    const sectionCount = lines.filter(line => line.type === 'header').length;
-    const effectiveDuration = Math.max(10, duration - introTime - outroTime);
-    
+    const duration = Math.max(MIN_PERFORMANCE_DURATION_SECONDS, actualDuration);
+    const introTime = estimateIntroTime(lines, duration);
+    const outroTime = Math.min(18, Math.max(8, duration * 0.05));
+    const totalWeight = Math.max(
+      1,
+      lines.reduce((sum, line) => sum + getLineWeight(line), 0)
+    );
+    const secondsPerWeight = Math.max(1.8, (duration - introTime - outroTime) / totalWeight);
+
     let currentTime = introTime;
-    const baseDuration = effectiveDuration / (totalLyricLines + (sectionCount * 0.5));
 
     return lines.map(line => {
+      const t = line.type === 'lyrics' ? currentTime : -1;
+      currentTime += getLineWeight(line) * secondsPerWeight;
+
       if (line.type === 'header') {
-        currentTime += baseDuration * 0.5;
-        return -1; // Headers don't get timestamps
+        return -1;
       }
       if (line.type === 'empty') return -1;
-      
-      const t = currentTime;
-      currentTime += baseDuration;
+
       return t;
     });
   }, [actualDuration, hasTimedLyrics, timedLyrics]);
@@ -860,7 +899,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   const updatePlaybackSpeed = (delta: number) => {
     setPlaybackSpeed(speed => {
-      const nextSpeed = Math.max(0.1, Math.min(3, Math.round((speed + delta) * 20) / 20));
+      const nextSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, Math.round((speed + delta) * 20) / 20));
       if (karaokeEnabled && playerReady && playerRef.current?.getCurrentTime) {
         const videoTime = Math.min(actualDuration, Math.max(0, playerRef.current.getCurrentTime() + syncOffset));
         videoAnchorRef.current = {
@@ -1028,14 +1067,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
     if (!isPlaying && activeLineIndex < 0 && !startedFromVideo) {
       const timings = getLineTimings();
-      const firstLine = timings.findIndex(t => t >= 0);
-      const startTime = firstLine >= 0 ? timings[firstLine] : 0;
+      const startTime = 0;
       currentTimeRef.current = startTime;
       setCurrentTime(startTime);
       videoAnchorRef.current = { videoTime: startTime, lyricTime: startTime };
-      activeLineIndexRef.current = firstLine >= 0 ? firstLine : 0;
-      setActiveLineIndex(firstLine >= 0 ? firstLine : 0);
-      if (firstLine >= 0) scrollToLine(firstLine);
+      activeLineIndexRef.current = -1;
+      setActiveLineIndex(-1);
+      scrollToProgress(startTime, timings, undefined, true);
     }
 
     if (karaokeEnabled && playerReady) {
