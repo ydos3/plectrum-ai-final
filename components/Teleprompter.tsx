@@ -420,36 +420,54 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     const container = scrollContainerRef.current;
     if (!container) return null;
 
-    if (timings && typeof activeIdx === 'number' && activeIdx >= 0) {
-      const currentTarget = getCachedCenteredScrollTop(activeIdx);
-      if (currentTarget !== null) {
-        const lineStart = timings[activeIdx] >= 0 ? timings[activeIdx] : time;
-        let nextIdx = -1;
-        for (let i = activeIdx + 1; i < timings.length; i++) {
-          if (timings[i] >= 0) {
-            nextIdx = i;
-            break;
-          }
+    if (timings && typeof activeIdx === 'number') {
+      if (activeIdx < 0) {
+        const firstValidIdx = timings.findIndex(t => t >= 0);
+        if (firstValidIdx >= 0) {
+          return getCachedCenteredScrollTop(firstValidIdx) ?? 0;
         }
-
-        if (nextIdx >= 0) {
-          const nextTarget = getCachedCenteredScrollTop(nextIdx);
-          const lineEnd = timings[nextIdx];
-          const lineDuration = Math.max(0.25, lineEnd - lineStart);
-          const rawProgress = Math.min(1, Math.max(0, (time - lineStart) / lineDuration));
-          if (nextTarget !== null) {
-            return currentTarget + ((nextTarget - currentTarget) * rawProgress);
+      } else {
+        const currentTarget = getCachedCenteredScrollTop(activeIdx);
+        if (currentTarget !== null) {
+          const lineStart = timings[activeIdx] >= 0 ? timings[activeIdx] : time;
+          let nextIdx = -1;
+          for (let i = activeIdx + 1; i < timings.length; i++) {
+            if (timings[i] >= 0) {
+              nextIdx = i;
+              break;
+            }
           }
-        }
 
-        return currentTarget;
+          if (nextIdx >= 0) {
+            const nextTarget = getCachedCenteredScrollTop(nextIdx);
+            const lineEnd = timings[nextIdx];
+            const lineDuration = Math.max(0.25, lineEnd - lineStart);
+            const rawProgress = Math.min(1, Math.max(0, (time - lineStart) / lineDuration));
+            if (nextTarget !== null) {
+              return currentTarget + ((nextTarget - currentTarget) * rawProgress);
+            }
+          }
+
+          return currentTarget;
+        }
       }
     }
 
     const scrollableDistance = Math.max(0, container.scrollHeight - container.clientHeight);
     if (scrollableDistance <= 0) return null;
 
-    const progress = Math.min(1, Math.max(0, time / Math.max(1, actualDuration)));
+    const introTime = estimateIntroTime(parsedLines.current, actualDuration);
+    const effectiveTime = Math.max(0, time - introTime);
+    const effectiveDuration = Math.max(1, actualDuration - introTime);
+    const progress = Math.min(1, Math.max(0, effectiveTime / effectiveDuration));
+    
+    const linesCount = parsedLines.current.length;
+    if (linesCount > 0) {
+      const firstTarget = getCachedCenteredScrollTop(0) ?? 0;
+      const lastTarget = getCachedCenteredScrollTop(linesCount - 1) ?? scrollableDistance;
+      return firstTarget + ((lastTarget - firstTarget) * progress);
+    }
+    
     return scrollableDistance * progress;
   }, [actualDuration, getCachedCenteredScrollTop]);
 
