@@ -134,6 +134,7 @@ const samples = [
   'kesariya guitar tabs',
   'majboor acoustic',
   'perfect ed sheeran chords',
+  'sailor song gigi perez',
   'finding her guitar',
   'unknown random song not in db',
 ];
