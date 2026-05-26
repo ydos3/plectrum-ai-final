@@ -43,7 +43,6 @@ type PersistedTeleprompterState = {
   playbackSpeed?: number;
   fontSize?: number;
   handedness?: Handedness;
-  syncOffset?: number;
   splitRatio?: number;
 };
 
@@ -122,7 +121,7 @@ const getInitialDuration = (song: Song) => (
 const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const persistedState = useRef<PersistedTeleprompterState>(readTeleprompterState());
   const [karaokeEnabled, setKaraokeEnabled] = useState(() => Boolean(persistedState.current.karaokeEnabled));
-  const [playbackSpeed, setPlaybackSpeed] = useState(() => clampNumber(persistedState.current.playbackSpeed, 0.75, MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED));
+  const [playbackSpeed, setPlaybackSpeed] = useState(() => clampNumber(persistedState.current.playbackSpeed, 1, MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED));
   
   // SPOTIFY-STYLE SCROLL STATE
   const [isPlaying, setIsPlaying] = useState(false);
@@ -152,7 +151,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const [videoErrorMessage, setVideoErrorMessage] = useState('');
   const [playerReady, setPlayerReady] = useState(false);
   const [isMashupMode, setIsMashupMode] = useState(false);
-  const [syncOffset, setSyncOffset] = useState(() => clampNumber(persistedState.current.syncOffset, 0, -30, 30));
+  const [syncOffset, setSyncOffset] = useState(0);
 
   // Resizable split pane: ratio is the lyrics panel width (0.3 – 0.8)
   const [splitRatio, setSplitRatio] = useState(() => clampNumber(persistedState.current.splitRatio, 0.67, 0.3, 0.8));
@@ -176,6 +175,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const sourceChannelName = fallbackLevel === DIRECT_SOURCE_LEVEL
     ? 'Direct YouTube link'
     : (activeSource?.channelName || 'YouTube');
+  const activeSyncTarget = activeVideoId || `${song.id}:${song.karaokeUrl || song.title}`;
 
   useEffect(() => {
     localStorage.setItem(TELEPROMPTER_STATE_KEY, JSON.stringify({
@@ -183,10 +183,19 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       playbackSpeed,
       fontSize,
       handedness,
-      syncOffset,
       splitRatio
     }));
-  }, [karaokeEnabled, playbackSpeed, fontSize, handedness, syncOffset, splitRatio]);
+  }, [karaokeEnabled, playbackSpeed, fontSize, handedness, splitRatio]);
+
+  useEffect(() => {
+    setSyncOffset(0);
+    videoAnchorRef.current = { videoTime: 0, lyricTime: 0 };
+  }, [activeSyncTarget]);
+
+  useEffect(() => {
+    if (!karaokeEnabled || !playerReady || !playerRef.current?.setPlaybackRate) return;
+    playerRef.current.setPlaybackRate(playbackSpeed);
+  }, [karaokeEnabled, playerReady, playbackSpeed]);
 
   // ─── Resizable Split Drag Handlers ─────────────────────────────────
 
@@ -199,7 +208,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const handleSplitPointerMove = useCallback((e: React.PointerEvent) => {
     if (!isDraggingSplitRef.current || !splitContainerRef.current) return;
     const rect = splitContainerRef.current.getBoundingClientRect();
-    const ratio = Math.min(0.8, Math.max(0.3, (e.clientX - rect.left) / rect.width));
+    const isDesktopSplit = window.matchMedia('(min-width: 768px)').matches;
+    const rawRatio = isDesktopSplit
+      ? (e.clientX - rect.left) / rect.width
+      : 1 - ((e.clientY - rect.top) / rect.height);
+    const ratio = Math.min(0.8, Math.max(0.3, rawRatio));
     setSplitRatio(ratio);
   }, []);
 
@@ -578,7 +591,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         ? playerRef.current.getCurrentTime() + syncOffset
         : null;
       const nextTime = typeof rawVideoTime === 'number' && Number.isFinite(rawVideoTime)
-        ? videoAnchorRef.current.lyricTime + ((rawVideoTime - videoAnchorRef.current.videoTime) * playbackSpeed)
+        ? rawVideoTime
         : currentTimeRef.current + (deltaTime * playbackSpeed);
       const clampedTime = Math.min(actualDuration, Math.max(0, nextTime));
       currentTimeRef.current = clampedTime;
@@ -816,6 +829,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                       const d = event.target.getDuration();
                       if (d > 0 && !getSongMetadataDuration(song)) setActualDuration(d);
                   }
+                  if (event.target.setPlaybackRate) {
+                      event.target.setPlaybackRate(playbackSpeed);
+                  }
                   event.target.playVideo();
               },
               onError: (event: any) => handleVideoError(event?.data),
@@ -827,9 +843,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                        const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
                        videoAnchorRef.current = {
                          videoTime: clampedTime,
-                         lyricTime: currentTimeRef.current || clampedTime
+                         lyricTime: clampedTime
                        };
-                       currentTimeRef.current = currentTimeRef.current || clampedTime;
+                       currentTimeRef.current = clampedTime;
                        setCurrentTime(currentTimeRef.current);
                        setIsPlaying(true);
                   } else if (event.data === 2 || event.data === 0) {
@@ -922,8 +938,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         const videoTime = Math.min(actualDuration, Math.max(0, playerRef.current.getCurrentTime() + syncOffset));
         videoAnchorRef.current = {
           videoTime,
-          lyricTime: currentTimeRef.current
+          lyricTime: videoTime
         };
+        playerRef.current?.setPlaybackRate?.(nextSpeed);
       }
       return nextSpeed;
     });
@@ -1070,9 +1087,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
       videoAnchorRef.current = {
         videoTime: clampedTime,
-        lyricTime: currentTimeRef.current || clampedTime
+        lyricTime: clampedTime
       };
-      currentTimeRef.current = currentTimeRef.current || clampedTime;
+      currentTimeRef.current = clampedTime;
       setCurrentTime(currentTimeRef.current);
       const timings = getLineTimings();
       const syncedLine = getActiveLineForTime(currentTimeRef.current, timings);
@@ -1107,6 +1124,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   };
 
   const isAiGenerated = (song as any).source === 'ai';
+  const activeTranscriptLine = activeLineIndex >= 0
+    ? parsedLines.current[activeLineIndex]?.lyricsOnly || parsedLines.current[activeLineIndex]?.text || ''
+    : '';
 
   return (
     <div
@@ -1179,8 +1199,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         style={karaokeEnabled ? { userSelect: isDraggingSplitRef.current ? 'none' : undefined } as React.CSSProperties : undefined}
       >
          <div
-           className={`min-h-0 relative ${karaokeEnabled ? 'teleprompter-lyrics-pane border-b md:border-b-0 md:border-r border-white/[0.05] order-2 md:order-1' : 'w-full h-full'}`}
-           style={karaokeEnabled ? { '--lyrics-pane-width': `${splitRatio * 100}%` } as React.CSSProperties : undefined}
+           className={`min-h-0 relative ${karaokeEnabled ? 'teleprompter-lyrics-pane border-t md:border-t-0 md:border-r border-white/[0.05] order-3 md:order-1' : 'w-full h-full'}`}
+           style={karaokeEnabled ? {
+             '--lyrics-pane-width': `${splitRatio * 100}%`,
+             '--lyrics-pane-height': `${splitRatio * 100}%`,
+           } as React.CSSProperties : undefined}
          >
              <div
                ref={scrollContainerRef}
@@ -1212,17 +1235,20 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
          {karaokeEnabled && (
            <div
              onPointerDown={handleSplitPointerDown}
-             className="hidden md:flex items-center justify-center w-2 cursor-col-resize order-2 shrink-0 group/divider z-20 hover:bg-white/[0.06] active:bg-indigo-500/20 transition-colors"
+             className="flex items-center justify-center h-3 md:h-full md:w-2 cursor-row-resize md:cursor-col-resize order-2 shrink-0 group/divider z-20 bg-white/[0.03] hover:bg-white/[0.08] active:bg-indigo-500/20 transition-colors"
              style={{ touchAction: 'none' }}
            >
-             <div className="w-0.5 h-12 rounded-full bg-white/20 group-hover/divider:bg-indigo-400/60 group-active/divider:bg-indigo-400 transition-colors"></div>
+             <div className="h-0.5 w-12 md:w-0.5 md:h-12 rounded-full bg-white/25 group-hover/divider:bg-indigo-400/60 group-active/divider:bg-indigo-400 transition-colors"></div>
            </div>
          )}
 
          {karaokeEnabled && (
              <div
-               className="bg-black/50 backdrop-blur-xl flex flex-col h-[40vh] md:h-full border-b md:border-b-0 md:border-l border-white/[0.05] shadow-2xl animate-in slide-in-from-right duration-300 order-1 md:order-3 shrink-0"
-               style={{ flex: '1 1 0%', minWidth: 0 }}
+               className="teleprompter-video-pane bg-black/50 backdrop-blur-xl flex flex-col border-b md:border-b-0 md:border-l border-white/[0.05] shadow-2xl animate-in slide-in-from-right duration-300 order-1 md:order-3 shrink-0"
+               style={{
+                 '--video-pane-height': `${(1 - splitRatio) * 100}%`,
+                 minWidth: 0,
+               } as React.CSSProperties}
              >
                  <div className="p-3 md:p-4 bg-white/[0.03] border-b border-white/[0.05] flex items-center justify-between backdrop-blur-lg">
                      <div className="flex items-center gap-2 text-indigo-400 font-bold uppercase tracking-widest text-xs">
@@ -1279,6 +1305,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                           </div>
                       </div>
 
+                      <div className="bg-indigo-500/[0.06] rounded-xl p-3 border border-indigo-400/10">
+                          <div className="text-[10px] text-indigo-300/70 uppercase font-bold tracking-widest mb-1">Video-linked transcription</div>
+                          <div className="text-sm text-white/85 leading-snug line-clamp-3">
+                              {activeTranscriptLine || 'Press play to follow the current lyric line against the video clock.'}
+                          </div>
+                      </div>
+
                       {/* Sync Controls */}
                       <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
                           <div className="flex justify-between items-center mb-2">
@@ -1286,9 +1319,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                               <span className="text-xs font-mono text-indigo-300/60">{syncOffset > 0 ? `+${syncOffset}s` : `${syncOffset}s`}</span>
                           </div>
                           <div className="flex gap-2 items-center">
-                              <button onClick={() => setSyncOffset(s => s - 1)} className="p-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-white transition-all"><Minus className="w-3 h-3"/></button>
+                              <button onClick={() => setSyncOffset(s => Math.max(-30, s - 1))} className="p-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-white transition-all"><Minus className="w-3 h-3"/></button>
                               <input type="range" min="-30" max="30" step="1" value={syncOffset} onChange={e => setSyncOffset(parseFloat(e.target.value))} className="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-                              <button onClick={() => setSyncOffset(s => s + 1)} className="p-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-white transition-all"><Plus className="w-3 h-3"/></button>
+                              <button onClick={() => setSyncOffset(s => Math.min(30, s + 1))} className="p-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-white transition-all"><Plus className="w-3 h-3"/></button>
+                              <button onClick={() => setSyncOffset(0)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-200 uppercase tracking-wider transition-all border border-white/[0.06]">Reset</button>
                           </div>
                       </div>
 

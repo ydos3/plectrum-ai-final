@@ -7,7 +7,7 @@ import {
   mapDatabaseSongToExistingGeminiFormat,
   searchSongDatabase as searchLocalSongDatabase,
 } from "./songDatabaseLookup";
-import { transliterateLyricsForLanguage } from "./indicTransliterationService";
+import { normalizeLyricsForRequestedLanguage } from "./indicTransliterationService";
 import { quickValidateAcousticDatabaseSong, SongQualityValidation, validateAcousticDatabaseSong, validateFrontendSongResult } from "./songQualityValidator";
 
 // ─── Model Configuration ──────────────────────────────────────────────
@@ -31,7 +31,7 @@ const MODELS = {
 const ENABLE_SONG_DATABASE_LOOKUPS = true;
 const REPAIRED_CACHE_KEY = 'plectrum_repaired_song_cache_v1';
 const NORMALIZED_SONG_CACHE_KEY = 'plectrum_normalized_song_cache_v1';
-const REPAIRED_CACHE_VERSION = 2;
+const REPAIRED_CACHE_VERSION = 3;
 const generationMemoryCache = new Map<string, any>();
 const pendingGenerationRequests = new Map<string, Promise<any>>();
 
@@ -448,6 +448,17 @@ const countContentLyricLines = (value: unknown) => (
     : 0
 );
 
+const normalizeContentScript = (content: string, language: AppLanguage) => (
+  content
+    .split(/\r?\n/)
+    .map(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('###')) return line;
+      return normalizeLyricsForRequestedLanguage(line, language);
+    })
+    .join('\n')
+);
+
 const isValidGeneratedResult = (result: any, minimumLines = 1) => (
   !!result &&
   typeof result === 'object' &&
@@ -482,6 +493,9 @@ const normalizeGeneratedResult = (
   data.recommendedKey = data.recommendedKey || data.easierKey || data.key || '';
   data.languageFallbackReason = data.languageFallbackReason || '';
   data.source = data.source || defaults.source;
+  if (typeof data.content === 'string') {
+    data.content = normalizeContentScript(data.content, defaults.language);
+  }
   if (defaults.validation) {
     data.qualityScore = defaults.validation.qualityScore;
     data.validationIssues = defaults.validation.issues;
@@ -533,7 +547,7 @@ const buildPlayableSongDraft = (
       if (section) return section;
       const chord = progression[lyricLineIndex % progression.length];
       lyricLineIndex += 1;
-      const lyricText = transliterateLyricsForLanguage(line.replace(/\[[^\]]*\]/g, ''), language);
+      const lyricText = normalizeLyricsForRequestedLanguage(line.replace(/\[[^\]]*\]/g, ''), language);
       return `[${chord}]${lyricText}`;
     })
     .filter((line, index, lines) => line || lines[index - 1]);
@@ -622,10 +636,16 @@ const devTimingEnd = (label: string, start: number, details?: Record<string, unk
   console.log(`[SongGenTiming] ${label}: ${Math.round(performance.now() - start)}ms`, details || '');
 };
 
-const readNormalizedSongCache = (cacheKey: string) => {
+const readNormalizedSongCache = (cacheKey: string, language: AppLanguage, skillLevel: SkillLevel) => {
   if (generationMemoryCache.has(cacheKey)) {
     logSongGenDebug('CACHE_HIT', { cache: 'memory', cacheKey });
-    return { ...generationMemoryCache.get(cacheKey), source: 'cache' };
+    const cached = { ...generationMemoryCache.get(cacheKey), source: 'cache' };
+    return normalizeGeneratedResult(cached, {
+      language,
+      skillLevel,
+      source: 'cache',
+      minimumLines: 1,
+    });
   }
   try {
     if (typeof localStorage === 'undefined') return null;
@@ -634,7 +654,12 @@ const readNormalizedSongCache = (cacheKey: string) => {
     if (!cached) return null;
     generationMemoryCache.set(cacheKey, cached);
     logSongGenDebug('CACHE_HIT', { cache: 'localStorage', cacheKey });
-    return { ...cached, source: 'cache' };
+    return normalizeGeneratedResult({ ...cached, source: 'cache' }, {
+      language,
+      skillLevel,
+      source: 'cache',
+      minimumLines: 1,
+    });
   } catch {
     return null;
   }
@@ -752,6 +777,7 @@ const assertVerifiedLyricsPreserved = (
   }
 
   if (language !== 'English') return;
+  if (/[\u0900-\u097F]/.test(sourceLyrics)) return;
 
   const sourceTokens = Array.from(new Set(lyricTokensForComparison(sourceLyrics)));
   const candidateTokens = new Set(lyricTokensForComparison(candidateContent));
@@ -920,7 +946,7 @@ ${lyrics}`;
       karaokeUrl: data.karaokeUrl || '',
       language,
       languageFallbackReason: data.languageFallbackReason || '',
-      content: data.content,
+      content: normalizeContentScript(data.content, language),
       duration: dbLikeResult.duration,
       source: 'ai',
     };
@@ -1404,14 +1430,18 @@ ${dbResult.plainLyrics}`;
     }
   }
 
-  if (!mashupMode) {
-    throw new Error(verifiedLyricsUnavailableMessage(query, verifiedIdentity));
+  if (!mashupMode && verifiedIdentity) {
+    logSongGenDebug('Verified lyric lookup missed; continuing with AI fallback using resolved identity', {
+      title: verifiedIdentity.title,
+      artist: verifiedIdentity.artist,
+      status: verifiedIdentity.status,
+      confidence: verifiedIdentity.confidence,
+    });
   }
 
-  // STEP 2: Mashups/original creative requests can still use Gemini. Real song
-  // requests above must come from verified lyrics, so we never fabricate a chart
-  // for a released song after LRCLIB/local lookup misses.
-  console.log('[SongGen] Creative mashup request, using Gemini Pro for:', query);
+  // STEP 2: If verified lyrics are unavailable, keep the app useful by asking
+  // Gemini for a practice-ready transcription instead of surfacing a hard error.
+  console.log('[SongGen] AI transcription fallback for:', query);
 
   try {
     const langInstruction = language === 'English' ? "English/Roman" : `${language} (${LANGUAGE_SCRIPT_HINTS[language] || 'selected script'})`;
@@ -1522,7 +1552,7 @@ export const generateSongFromTitle = async (
 ): Promise<any> => {
   const practiceSkill = normalizePracticeSkill(skillLevel);
   const cacheKey = cacheKeyForGeneration(query, language, practiceSkill);
-  const cached = readNormalizedSongCache(cacheKey);
+  const cached = readNormalizedSongCache(cacheKey, language, practiceSkill);
   if (cached) return cached;
 
   const pending = pendingGenerationRequests.get(cacheKey);

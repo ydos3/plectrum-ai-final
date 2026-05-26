@@ -14,9 +14,12 @@ interface SongListProps {
 const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPractice, onCreateNew }) => {
   const [songs, setSongs] = useState<Song[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeLetter, setActiveLetter] = useState('All');
 
   const loadSongs = () => {
-    const storedSongs = getSongs().sort((a, b) => b.createdAt - a.createdAt);
+    const storedSongs = getSongs().sort((a, b) => (
+      a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true })
+    ));
     setSongs(storedSongs);
   };
 
@@ -136,13 +139,27 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
     printWindow.document.close();
   };
 
-  const filteredSongs = songs.filter(song =>
-    song.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    song.artist.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const getSongLetter = (song: Song): string => {
+    const first = (song.title || '#').trim().charAt(0).toUpperCase();
+    return /^[A-Z]$/.test(first) ? first : '#';
+  };
+
+  const songLetters = Array.from(new Set<string>(songs.map(getSongLetter))).sort((a, b) => {
+    if (a === '#') return 1;
+    if (b === '#') return -1;
+    return a.localeCompare(b);
+  });
+
+  const filteredSongs = songs.filter(song => {
+    const matchesSearch =
+      song.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      song.artist.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesLetter = activeLetter === 'All' || getSongLetter(song) === activeLetter;
+    return matchesSearch && matchesLetter;
+  });
 
   return (
-    <div className="p-6 md:p-8 max-w-7xl mx-auto h-full overflow-y-auto">
+    <div className="relative p-6 md:p-8 max-w-7xl mx-auto h-full overflow-y-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h2 className="text-3xl font-display font-bold text-amber-100 mb-2 drop-shadow-sm">
@@ -162,7 +179,26 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-20">
+      {songLetters.length > 1 && (
+        <div className="fixed right-2 md:right-5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-1 rounded-full border border-amber-700/40 bg-[#1a0f0a]/85 px-1.5 py-2 shadow-2xl backdrop-blur-md no-global-click">
+          {['All', ...songLetters].map(letter => (
+            <button
+              key={letter}
+              onClick={() => setActiveLetter(letter)}
+              className={`min-w-7 h-6 rounded-full px-1 text-[10px] font-black transition-all ${
+                activeLetter === letter
+                  ? 'bg-amber-600 text-white shadow-[0_0_18px_rgba(217,119,6,0.35)]'
+                  : 'text-amber-500 hover:bg-amber-900/40 hover:text-amber-100'
+              }`}
+              title={letter === 'All' ? 'Show all songs' : `Show ${letter} songs`}
+            >
+              {letter}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-20 pr-7 md:pr-2">
         <div
           onClick={onCreateNew}
           className="group relative bg-gradient-to-br from-amber-900/40 to-[#2d1b15] hover:from-amber-800/50 hover:to-[#3e2723] border-2 border-dashed border-amber-600/50 hover:border-amber-500 rounded-xl p-5 transition-all cursor-pointer flex flex-col items-center justify-center h-64 shadow-inner"

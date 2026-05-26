@@ -24,11 +24,10 @@ const PRESET_CHORDS = {
     capo: 0
 };
 
-// Exact pattern provided by user
-const PRESET_FINGERSTYLE = {
-    title: "Standard Fingerstyle",
+const PRESET_PAYPHONE = {
+    title: "Payphone Fingerstyle",
     mode: 'FINGERSTYLE' as InputMode,
-    text: "B0-h-B1-s-B3-e5-A5-G0-e3/B3--A5-G0/B3/e3-pulloff-e2-B3-B1- -E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-G0-B1-E0-B0-D2-G2-E0-D2-B0-G2-A5-D4-G2-D4-B0-h-B1-s-B3-e5-A5-G0-e3/B3--A5-G0/B3/e3-pulloff-e2-B3-B1- -E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-G0-B1-E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-E3-B0-h-B1-E0-D2-B0-G2-E0-D2-B0-G2",
+    text: "B0-h-B1-s-B3-e5-A5-G0-e3/B3--A5-G0/B3/e3-pulloff-e2-B3-B1- -E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-G0-B1-E0-B0-D2-G2-E0-D2-B0-G2-A5-D4-G2-D4-B0-h-B1-s-B3-e5-A5-G0-e3/B3--A5-G0/B3/e3-pulloff-e2-B3-B1- -E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-G0-B1-E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-E3-B0-h-B1-E0-D2-B0-G2-E0-D2-B0-G2-D0---G0-G0-A3-D2-G0-Slap-E0-B3-B3-A3-B0-G2-Slap-E0-G2",
     pattern: "",
     capo: 3
 };
@@ -36,11 +35,11 @@ const PRESET_FINGERSTYLE = {
 const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   const [handedness, setHandedness] = useState<Handedness>('Right');
   const [inputMode, setInputMode] = useState<InputMode>('FINGERSTYLE');
-  const [inputText, setInputText] = useState(PRESET_FINGERSTYLE.text); 
+  const [inputText, setInputText] = useState(PRESET_PAYPHONE.text);
   const [strumPattern, setStrumPattern] = useState(''); 
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
-  const [capoPosition, setCapoPosition] = useState(PRESET_FINGERSTYLE.capo);
+  const [capoPosition, setCapoPosition] = useState(PRESET_PAYPHONE.capo);
 
   const [activeNotes, setActiveNotes] = useState<{string: number, fret: number}[]>([]);
   
@@ -50,6 +49,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   // Refs for loop control to avoid state closure traps
   const playbackTimeout = useRef<number | null>(null);
   const isPlayingRef = useRef(false);
+  const previousFretsRef = useRef<Map<number, number>>(new Map());
 
   useEffect(() => {
     setSongs(getSongs());
@@ -72,7 +72,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
       setShowLoadModal(false);
   };
 
-  const loadPreset = (preset: typeof PRESET_CHORDS | typeof PRESET_FINGERSTYLE) => {
+  const loadPreset = (preset: typeof PRESET_CHORDS | typeof PRESET_PAYPHONE) => {
       setInputMode(preset.mode);
       setInputText(preset.text);
       setStrumPattern(preset.pattern);
@@ -84,8 +84,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
       if (initialSong) {
           loadSongIntoLab(initialSong);
       } else {
-          // Explicitly default to the fingerstyle preset if no song
-          loadPreset(PRESET_FINGERSTYLE);
+          loadPreset(PRESET_PAYPHONE);
       }
   }, [initialSong]);
 
@@ -147,21 +146,31 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
           // FINGERSTYLE LOGIC
           const frame = steps[stepIndex];
           if (frame) {
+              if (frame.percussion === 'slap') {
+                  setActiveNotes([]);
+                  playPercussion();
+                  nextDelay = frame.duration / playbackSpeed;
+              } else {
               // Apply Capo to frame notes
               const playedNotes = frame.notes.map((n: any) => ({
                   string: n.string,
                   fret: n.fret === 0 ? capoPosition : n.fret + capoPosition,
-                  technique: n.technique
+                  technique: n.technique,
+                  fromFret: ['hammer-on', 'pull-off', 'slide'].includes(n.technique)
+                    ? previousFretsRef.current.get(n.string)
+                    : undefined
               }));
               
               setActiveNotes(playedNotes);
               
               // Play notes
               playedNotes.forEach((n: any) => {
-                  playNote(n.string, n.fret, n.technique || 'normal');
+                  playNote(n.string, n.fret, n.technique || 'normal', 0, n.fromFret);
               });
+              playedNotes.forEach((n: any) => previousFretsRef.current.set(n.string, n.fret));
               
               nextDelay = frame.duration / playbackSpeed;
+              }
           }
       }
 
@@ -173,6 +182,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   const startPlayback = () => {
       if (playbackTimeout.current) window.clearTimeout(playbackTimeout.current);
       resumeAudio(); // Ensure audio context is ready
+      previousFretsRef.current.clear();
       isPlayingRef.current = true;
       setIsPlaying(true);
 
@@ -192,6 +202,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
       playbackTimeout.current = null;
       stopAllAudio();
       setActiveNotes([]);
+      previousFretsRef.current.clear();
   };
 
   const insertChord = (chord: string) => {
@@ -372,9 +383,9 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
                                <div className="text-amber-200 font-bold text-sm">Chords w/ Strumming</div>
                                <div className="text-[10px] text-amber-500">Masterpiece (Complex Chords)</div>
                            </button>
-                           <button onClick={() => loadPreset(PRESET_FINGERSTYLE)} className="p-3 bg-amber-900/30 hover:bg-amber-800 rounded border border-amber-800 text-left">
-                               <div className="text-amber-200 font-bold text-sm">Custom Fingerstyle</div>
-                               <div className="text-[10px] text-amber-500">Your Preset Tab</div>
+                           <button onClick={() => loadPreset(PRESET_PAYPHONE)} className="p-3 bg-amber-900/30 hover:bg-amber-800 rounded border border-amber-800 text-left">
+                               <div className="text-amber-200 font-bold text-sm">Payphone Fingerstyle</div>
+                               <div className="text-[10px] text-amber-500">Slides, pull-offs, slaps</div>
                            </button>
                        </div>
                    </div>

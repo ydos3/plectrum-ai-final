@@ -1,6 +1,6 @@
 import rawSongDatabase from '../data/acoustic_setlist_db.min.json?raw';
 import { AppLanguage, SkillLevel } from '../types';
-import { transliterateLyricsForLanguage } from './indicTransliterationService';
+import { normalizeLyricsForRequestedLanguage } from './indicTransliterationService';
 import { AcousticDbSong, AcousticSetlistDatabase } from './songDbTypes';
 
 export type SongDatabaseRecord = AcousticDbSong;
@@ -509,7 +509,7 @@ const transliterateContentForLanguage = (content: string, language: AppLanguage)
     .map(line => {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('###')) return line;
-      return transliterateLyricsForLanguage(line, language);
+      return normalizeLyricsForRequestedLanguage(line, language);
     })
     .join('\n');
 };

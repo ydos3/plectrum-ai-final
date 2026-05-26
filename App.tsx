@@ -54,7 +54,7 @@ const readPersistedAppState = (): PersistedAppState => {
 };
 
 const viewNeedsSong = (view?: ViewState) => (
-    view === 'TELEPROMPTER' || view === 'FRETBOARD_LAB' || view === 'PRACTICE_ROOM'
+    view === 'TELEPROMPTER' || view === 'PRACTICE_ROOM'
 );
 
 const isAppHistoryState = (state: unknown): state is AppHistoryState => (

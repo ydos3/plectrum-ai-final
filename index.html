@@ -201,13 +201,27 @@
 
       .teleprompter-lyrics-pane {
         width: 100%;
-        flex: 1 1 0%;
+        height: var(--lyrics-pane-height, 60%);
+        flex: 0 0 auto;
+      }
+
+      .teleprompter-video-pane {
+        width: 100%;
+        height: var(--video-pane-height, 40%);
+        min-height: 0;
+        flex: 0 0 auto;
       }
 
       @media (min-width: 768px) {
         .teleprompter-lyrics-pane {
           width: var(--lyrics-pane-width, 67%);
+          height: 100%;
           flex: 0 0 auto;
+        }
+
+        .teleprompter-video-pane {
+          height: 100%;
+          flex: 1 1 0%;
         }
       }
 

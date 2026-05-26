@@ -70,11 +70,13 @@ const hasMalformedChordPlacement = (lines: string[]) => {
 };
 
 const hasScriptMismatch = (content: string, language: AppLanguage) => {
-  if (language === 'English') return false;
   const lyricText = lyricLinesFromContent(content).join(' ');
   if (!lyricText.trim()) return false;
   const latinChars = (lyricText.match(/[A-Za-z]/g) || []).length;
   const devanagariChars = (lyricText.match(/[\u0900-\u097F]/g) || []).length;
+  if (language === 'English') {
+    return devanagariChars > 10 && latinChars < devanagariChars * 2;
+  }
   if (['Hindi', 'Marathi', 'Maithili'].includes(language)) {
     return latinChars > 80 && devanagariChars < 10;
   }

@@ -124,6 +124,81 @@ const SCRIPT_RULES: Partial<Record<AppLanguage, ScriptRule>> = {
 const VOWELS = new Set(['a', 'aa', 'i', 'ee', 'u', 'oo', 'e', 'ai', 'o', 'au']);
 const TOKEN_ORDER = ['kh', 'gh', 'ch', 'jh', 'th', 'dh', 'ph', 'bh', 'sh', 'aa', 'ee', 'oo', 'ai', 'au'];
 
+const DEVANAGARI_INDEPENDENT_VOWELS: Record<string, string> = {
+  '\u0905': 'a',
+  '\u0906': 'aa',
+  '\u0907': 'i',
+  '\u0908': 'ee',
+  '\u0909': 'u',
+  '\u090A': 'oo',
+  '\u090B': 'ri',
+  '\u090F': 'e',
+  '\u0910': 'ai',
+  '\u0913': 'o',
+  '\u0914': 'au',
+};
+
+const DEVANAGARI_VOWEL_SIGNS: Record<string, string> = {
+  '\u093E': 'aa',
+  '\u093F': 'i',
+  '\u0940': 'ee',
+  '\u0941': 'u',
+  '\u0942': 'oo',
+  '\u0943': 'ri',
+  '\u0947': 'e',
+  '\u0948': 'ai',
+  '\u094B': 'o',
+  '\u094C': 'au',
+};
+
+const DEVANAGARI_CONSONANTS: Record<string, string> = {
+  '\u0915': 'k',
+  '\u0916': 'kh',
+  '\u0917': 'g',
+  '\u0918': 'gh',
+  '\u0919': 'ng',
+  '\u091A': 'ch',
+  '\u091B': 'chh',
+  '\u091C': 'j',
+  '\u091D': 'jh',
+  '\u091E': 'ny',
+  '\u091F': 't',
+  '\u0920': 'th',
+  '\u0921': 'd',
+  '\u0922': 'dh',
+  '\u0923': 'n',
+  '\u0924': 't',
+  '\u0925': 'th',
+  '\u0926': 'd',
+  '\u0927': 'dh',
+  '\u0928': 'n',
+  '\u092A': 'p',
+  '\u092B': 'ph',
+  '\u092C': 'b',
+  '\u092D': 'bh',
+  '\u092E': 'm',
+  '\u092F': 'y',
+  '\u0930': 'r',
+  '\u0932': 'l',
+  '\u0935': 'v',
+  '\u0936': 'sh',
+  '\u0937': 'sh',
+  '\u0938': 's',
+  '\u0939': 'h',
+  '\u0958': 'q',
+  '\u0959': 'kh',
+  '\u095A': 'gh',
+  '\u095B': 'z',
+  '\u095C': 'r',
+  '\u095D': 'rh',
+  '\u095E': 'f',
+  '\u095F': 'y',
+};
+
+const DEVANAGARI_MARKS_TO_DROP = new Set([
+  '\u0900', '\u0901', '\u0902', '\u0903', '\u093C', '\u094D', '\u0951', '\u0952',
+]);
+
 const tokenizeRomanWord = (word: string) => {
   const tokens: string[] = [];
   let i = 0;
@@ -188,6 +263,57 @@ const transliterateWord = (word: string, map: Record<string, string>) => {
 
   return result;
 };
+
+const romanizeDevanagariText = (text: string) => {
+  let result = '';
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (DEVANAGARI_CONSONANTS[char]) {
+      const vowel = DEVANAGARI_VOWEL_SIGNS[next];
+      const viramaNext = next === '\u094D';
+      result += DEVANAGARI_CONSONANTS[char];
+      if (vowel) {
+        result += vowel;
+        i += 1;
+      } else if (!viramaNext) {
+        result += 'a';
+      } else {
+        i += 1;
+      }
+      continue;
+    }
+
+    if (DEVANAGARI_INDEPENDENT_VOWELS[char]) {
+      result += DEVANAGARI_INDEPENDENT_VOWELS[char];
+      continue;
+    }
+
+    if (DEVANAGARI_MARKS_TO_DROP.has(char) || DEVANAGARI_VOWEL_SIGNS[char]) {
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.!?;:])/g, '$1')
+    .trim();
+};
+
+export const romanizeLyricsForEnglish = (text: string) => (
+  text.replace(/(\[[^\]]+\])|([\u0900-\u097F][\u0900-\u097F\s.,!?;:'"-]*)/g, (match, chord, indicText) => {
+    if (chord) return chord;
+    return romanizeDevanagariText(indicText);
+  })
+);
+
+export const normalizeLyricsForRequestedLanguage = (text: string, language: AppLanguage) => (
+  language === 'English' ? romanizeLyricsForEnglish(text) : transliterateLyricsForLanguage(text, language)
+);
 
 export const transliterateLyricsForLanguage = (text: string, language: AppLanguage) => {
   if (language === 'English') return text;

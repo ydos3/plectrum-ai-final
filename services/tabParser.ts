@@ -3,8 +3,9 @@ export interface TabFrame {
   notes: {
     string: number; // 0 (Low E) to 5 (High e)
     fret: number;
-    technique?: 'hammer-on' | 'pull-off' | 'normal';
+    technique?: 'hammer-on' | 'pull-off' | 'slide' | 'normal';
   }[];
+  percussion?: 'slap';
   duration: number; // in ms
 }
 
@@ -19,21 +20,37 @@ const STRING_MAP: Record<string, number> = {
  * - Slash (/): Simultaneous play (Chord)
  * - h / hammer / hammeron: Hammer-on (affects next note)
  * - p / pull / pulloff / pull-off: Pull-off (affects next note)
- * - s / slide: accepted as a timing modifier and played as the next normal note
+ * - s / slide: Slide into the next note
+ * - slap: Percussive hit
+ * - Empty tokens from "--" or "---": short rests
  */
 export const parseFingerstyleTab = (input: string): TabFrame[] => {
-  // Remove whitespace, keep delimiters
-  const cleanInput = input.replace(/\s+/g, '');
+  // Keep delimiters while removing accidental spacing around them.
+  const cleanInput = input
+    .replace(/\s*-\s*/g, '-')
+    .replace(/\s*\/\s*/g, '/')
+    .replace(/\s+/g, '')
+    .replace(/([eBGDAE]\d+)(h|p|s)([eBGDAE]\d+)/gi, (_, from, technique, to) => {
+      const modifier = technique.toLowerCase() === 'h'
+        ? 'h'
+        : technique.toLowerCase() === 'p'
+          ? 'pulloff'
+          : 's';
+      return `${from}-${modifier}-${to}`;
+    });
   
   // Split by hyphen to get time steps
   // Example: "B7-G2/A0-h-G4" -> ["B7", "G2/A0", "h", "G4"]
   const tokens = cleanInput.split('-');
   const frames: TabFrame[] = [];
   
-  let nextTechnique: 'hammer-on' | 'pull-off' | 'normal' = 'normal';
+  let nextTechnique: 'hammer-on' | 'pull-off' | 'slide' | 'normal' = 'normal';
 
   tokens.forEach(token => {
-    if (!token) return;
+    if (!token) {
+      frames.push({ notes: [], duration: 180 });
+      return;
+    }
 
     // Check for technique tokens
     const normalizedToken = token.toLowerCase();
@@ -46,6 +63,11 @@ export const parseFingerstyleTab = (input: string): TabFrame[] => {
       return;
     }
     if (normalizedToken === 's' || normalizedToken === 'slide') {
+      nextTechnique = 'slide';
+      return;
+    }
+    if (normalizedToken === 'slap' || normalizedToken === 'x') {
+      frames.push({ notes: [], percussion: 'slap', duration: 220 });
       nextTechnique = 'normal';
       return;
     }
@@ -69,8 +91,8 @@ export const parseFingerstyleTab = (input: string): TabFrame[] => {
             technique: nextTechnique
           });
         }
-      } else if (part.toUpperCase() === 'X') {
-         // Percussion/Mute currently ignored in specific note mapping or handled elsewhere
+      } else if (part.toLowerCase() === 'slap' || part.toUpperCase() === 'X') {
+        frames.push({ notes: [], percussion: 'slap', duration: 220 });
       }
     });
 
@@ -79,7 +101,7 @@ export const parseFingerstyleTab = (input: string): TabFrame[] => {
       // For simplicity in this lab, we give it standard duration but change audio envelope.
       frames.push({
         notes: frameNotes,
-        duration: nextTechnique !== 'normal' ? 300 : 500
+        duration: nextTechnique !== 'normal' ? 280 : 460
       });
     }
 

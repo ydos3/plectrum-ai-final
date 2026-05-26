@@ -134,6 +134,7 @@ export const stopAllAudio = () => {
 };
 
 export const BASE_FREQUENCIES = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
+type NoteTechnique = 'normal' | 'hammer' | 'pull' | 'hammer-on' | 'pull-off' | 'slide';
 
 export const playPercussion = () => {
   const { ctx, output } = initAudio();
@@ -165,26 +166,33 @@ const scheduleNote = (
   output: AudioNode,
   stringIdx: number,
   fret: number,
-  type: 'normal' | 'hammer' | 'pull' | 'hammer-on' | 'pull-off' = 'normal',
+  type: NoteTechnique = 'normal',
   tuningOffset: number = 0,
-  startTime: number = ctx.currentTime
+  startTime: number = ctx.currentTime,
+  fromFret?: number
 ) => {
   if (fret < 0) return; 
   const now = Math.max(ctx.currentTime, startTime);
   const freq = BASE_FREQUENCIES[stringIdx] * Math.pow(2, (fret + tuningOffset) / 12);
+  const fromFreq = typeof fromFret === 'number' && fromFret >= 0
+    ? BASE_FREQUENCIES[stringIdx] * Math.pow(2, (fromFret + tuningOffset) / 12)
+    : freq;
   if (!Number.isFinite(freq)) return;
 
   const noteGain = ctx.createGain();
   const isBassString = stringIdx <= 2;
-  const isLegato = type === 'hammer' || type === 'pull' || type === 'hammer-on' || type === 'pull-off';
-  const baseAmplitude = isBassString ? 0.31 : 0.26;
-  const attackTime = isLegato ? 0.018 : 0.006;
-  const decayDuration = isBassString ? 1.55 : 1.25;
+  const isHammer = type === 'hammer' || type === 'hammer-on';
+  const isPull = type === 'pull' || type === 'pull-off';
+  const isSlide = type === 'slide';
+  const isLegato = isHammer || isPull || isSlide;
+  const baseAmplitude = (isBassString ? 0.31 : 0.26) * (isHammer ? 0.72 : isPull ? 0.62 : isSlide ? 0.78 : 1);
+  const attackTime = isSlide ? 0.012 : isHammer ? 0.024 : isPull ? 0.014 : 0.006;
+  const decayDuration = (isBassString ? 1.55 : 1.25) * (isLegato ? 0.86 : 1);
 
   noteGain.gain.cancelScheduledValues(now);
   noteGain.gain.setValueAtTime(0.0001, now);
   noteGain.gain.linearRampToValueAtTime(baseAmplitude, now + attackTime);
-  noteGain.gain.exponentialRampToValueAtTime(baseAmplitude * 0.34, now + 0.11);
+  noteGain.gain.exponentialRampToValueAtTime(baseAmplitude * (isPull ? 0.26 : 0.34), now + (isSlide ? 0.18 : 0.11));
   noteGain.gain.exponentialRampToValueAtTime(0.001, now + decayDuration);
 
   const bodyFilter = ctx.createBiquadFilter();
@@ -210,7 +218,12 @@ const scheduleNote = (
     const osc = ctx.createOscillator();
     const harmonicGain = ctx.createGain();
     osc.type = index === 0 ? 'triangle' : 'sine';
-    osc.frequency.setValueAtTime(freq * multiple, now);
+    if (isSlide && fromFreq !== freq) {
+      osc.frequency.setValueAtTime(fromFreq * multiple, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * multiple, now + 0.13);
+    } else {
+      osc.frequency.setValueAtTime(freq * multiple, now);
+    }
     osc.detune.setValueAtTime((stringIdx - 2.5) * 1.7 + index * 0.4, now);
     harmonicGain.gain.setValueAtTime(amplitudes[index] / partials.length, now);
     osc.connect(harmonicGain);
@@ -231,7 +244,16 @@ const scheduleNote = (
   const pickFilter = ctx.createBiquadFilter();
   pickFilter.type = 'highpass';
   pickFilter.frequency.value = 1200;
-  pickGain.gain.setValueAtTime(isBassString ? 0.055 : 0.045, now);
+  const pickLevel = isLegato
+    ? isSlide
+      ? 0.014
+      : isPull
+        ? 0.018
+        : 0.012
+    : isBassString
+      ? 0.055
+      : 0.045;
+  pickGain.gain.setValueAtTime(pickLevel, now);
   pickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
   pickNoise.buffer = noiseBuffer;
   pickNoise.connect(pickFilter);
@@ -251,9 +273,9 @@ const scheduleNote = (
   });
 };
 
-export const playNote = (stringIdx: number, fret: number, type: 'normal' | 'hammer' | 'pull' | 'hammer-on' | 'pull-off' = 'normal', tuningOffset: number = 0) => {
+export const playNote = (stringIdx: number, fret: number, type: NoteTechnique = 'normal', tuningOffset: number = 0, fromFret?: number) => {
   const { ctx, output } = initAudio();
-  scheduleNote(ctx, output, stringIdx, fret, type, tuningOffset);
+  scheduleNote(ctx, output, stringIdx, fret, type, tuningOffset, ctx.currentTime, fromFret);
 };
 
 export const playStrum = (notes: {string: number, fret: number}[], direction: 'D' | 'U' | 'X', speed: number = 1) => {
