@@ -1,10 +1,25 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Song, Handedness } from '../types';
-import { Play, Pause, X, Layout, Search, ExternalLink, ArrowRight, AlertCircle, Youtube, Minus, Plus, Loader2, Music, RefreshCw, Mic2, Merge, ArrowLeft, Activity, Timer } from 'lucide-react';
+import { Play, Pause, X, Layout, Search, ExternalLink, ArrowRight, AlertCircle, Youtube, Minus, Plus, Loader2, RefreshCw, Mic2, ArrowLeft, Timer } from 'lucide-react';
 import { getChordFingering } from '../services/chordService';
 import { getYouTubeVideoId } from '../services/geminiService';
 import { extractYouTubeVideoId, getYouTubeSearchUrl, searchYouTubeSource, toYouTubeWatchUrl, YouTubeSource, YouTubeSourceType } from '../services/youtubeService';
+import {
+  calculateTwoPointCalibration,
+  CalibrationPoint,
+  DEFAULT_LYRIC_SYNC_CORRECTION,
+  findActiveCueIndex,
+  lyricTimeToVideoTimeMs,
+  LyricCue,
+  LyricSyncCorrection,
+  moveLyricsEarlier,
+  moveLyricsLater,
+  resetSongSyncState,
+  timedLyricsToCues,
+  videoTimeToLyricTimeMs
+} from '../services/lyricsSync';
+import { useYouTubePlaybackClock } from './useYouTubePlaybackClock';
 import GuitarFretboard from './GuitarFretboard';
 
 interface TeleprompterProps {
@@ -13,10 +28,12 @@ interface TeleprompterProps {
 }
 
 const TELEPROMPTER_STATE_KEY = 'plectrum_teleprompter_state_v1';
+const LYRICS_SYNC_CORRECTIONS_KEY = 'plectrum_lyrics_sync_corrections_v1';
 const DEFAULT_OFFICIAL_SONG_DURATION_SECONDS = 240;
 const MIN_PERFORMANCE_DURATION_SECONDS = 210;
 const MIN_PLAYBACK_SPEED = 0.05;
 const MAX_PLAYBACK_SPEED = 2;
+const SYNCED_LYRIC_ANCHOR_RATIO = 0.38;
 
 type SourceStep = {
   level: number;
@@ -46,11 +63,49 @@ type PersistedTeleprompterState = {
   splitRatio?: number;
 };
 
+type PersistedLyricsSyncCorrections = Record<string, LyricSyncCorrection>;
+
+type SyncedLineCue = LyricCue & {
+  lineIndex: number;
+};
+
 const readTeleprompterState = (): PersistedTeleprompterState => {
   try {
     return JSON.parse(localStorage.getItem(TELEPROMPTER_STATE_KEY) || '{}');
   } catch {
     return {};
+  }
+};
+
+const readLyricsSyncCorrection = (target: string): LyricSyncCorrection => {
+  try {
+    const corrections = JSON.parse(localStorage.getItem(LYRICS_SYNC_CORRECTIONS_KEY) || '{}') as PersistedLyricsSyncCorrections;
+    const correction = corrections[target];
+    const offsetMs = typeof correction?.offsetMs === 'number' && Number.isFinite(correction.offsetMs)
+      ? correction.offsetMs
+      : 0;
+    const scale = typeof correction?.scale === 'number' && Number.isFinite(correction.scale)
+      ? correction.scale
+      : 1;
+    return {
+      offsetMs,
+      scale: scale >= 0.9 && scale <= 1.1 ? scale : 1,
+    };
+  } catch {
+    return DEFAULT_LYRIC_SYNC_CORRECTION;
+  }
+};
+
+const writeLyricsSyncCorrection = (target: string, correction: LyricSyncCorrection) => {
+  try {
+    const corrections = JSON.parse(localStorage.getItem(LYRICS_SYNC_CORRECTIONS_KEY) || '{}') as PersistedLyricsSyncCorrections;
+    corrections[target] = {
+      offsetMs: Math.round(correction.offsetMs),
+      scale: Number(correction.scale.toFixed(6)),
+    };
+    localStorage.setItem(LYRICS_SYNC_CORRECTIONS_KEY, JSON.stringify(corrections));
+  } catch {
+    // Local persistence is best-effort; sync should keep working in-memory.
   }
 };
 
@@ -151,7 +206,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const [videoErrorMessage, setVideoErrorMessage] = useState('');
   const [playerReady, setPlayerReady] = useState(false);
   const [isMashupMode, setIsMashupMode] = useState(false);
-  const [syncOffset, setSyncOffset] = useState(0);
+  const [syncCorrection, setSyncCorrection] = useState<LyricSyncCorrection>(DEFAULT_LYRIC_SYNC_CORRECTION);
+  const [calibrationPoint, setCalibrationPoint] = useState<CalibrationPoint | null>(null);
+  const [syncMessage, setSyncMessage] = useState('');
+  const [autoFollowPaused, setAutoFollowPaused] = useState(false);
+  const [showReturnToCurrent, setShowReturnToCurrent] = useState(false);
 
   // Resizable split pane: ratio is the lyrics panel width (0.3 – 0.8)
   const [splitRatio, setSplitRatio] = useState(() => clampNumber(persistedState.current.splitRatio, 0.67, 0.3, 0.8));
@@ -176,6 +235,15 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     ? 'Direct YouTube link'
     : (activeSource?.channelName || 'YouTube');
   const activeSyncTarget = activeVideoId || `${song.id}:${song.karaokeUrl || song.title}`;
+  const playbackClock = useYouTubePlaybackClock({
+    enabled: karaokeEnabled && playerReady,
+    playerRef,
+    durationMs: actualDuration * 1000,
+  });
+  const { getEstimatedTimeMs: getEstimatedPlaybackTimeMs, syncNow: syncPlaybackClockNow } = playbackClock;
+  const timedCues = useMemo(() => timedLyricsToCues(song.timedLyrics || []), [song.timedLyrics]);
+  const hasTimedLyrics = timedCues.length > 0;
+  const isSyncedLyricsMode = karaokeEnabled && hasTimedLyrics;
 
   useEffect(() => {
     localStorage.setItem(TELEPROMPTER_STATE_KEY, JSON.stringify({
@@ -188,14 +256,23 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   }, [karaokeEnabled, playbackSpeed, fontSize, handedness, splitRatio]);
 
   useEffect(() => {
-    setSyncOffset(0);
+    setSyncCorrection(readLyricsSyncCorrection(activeSyncTarget));
+    setCalibrationPoint(null);
+    setSyncMessage('');
+    setAutoFollowPaused(false);
+    setShowReturnToCurrent(false);
     videoAnchorRef.current = { videoTime: 0, lyricTime: 0 };
   }, [activeSyncTarget]);
 
   useEffect(() => {
+    writeLyricsSyncCorrection(activeSyncTarget, syncCorrection);
+  }, [activeSyncTarget, syncCorrection]);
+
+  useEffect(() => {
     if (!karaokeEnabled || !playerReady || !playerRef.current?.setPlaybackRate) return;
     playerRef.current.setPlaybackRate(playbackSpeed);
-  }, [karaokeEnabled, playerReady, playbackSpeed]);
+    syncPlaybackClockNow(isPlaying);
+  }, [isPlaying, karaokeEnabled, playerReady, playbackSpeed, syncPlaybackClockNow]);
 
   // ─── Resizable Split Drag Handlers ─────────────────────────────────
 
@@ -274,9 +351,6 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   // ─── Timed Lyrics Support ──────────────────────────────────────────
 
-  const timedLyrics = song.timedLyrics;
-  const hasTimedLyrics = timedLyrics && timedLyrics.length > 0;
-
   // ─── Spotify-Style Auto-Scroll Engine ──────────────────────────────
 
   const getLineWeight = (line: ParsedLine) => {
@@ -311,7 +385,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     const totalLyricLines = lines.filter(l => l.type === 'lyrics').length;
     if (totalLyricLines === 0) return [];
 
-    if (hasTimedLyrics && timedLyrics) {
+    if (hasTimedLyrics) {
       const normalize = (text: string) => text
         .replace(/\[.*?\]/g, '')
         .toLowerCase()
@@ -320,7 +394,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         .trim();
 
       let lyricIdx = 0;
-      const normalizedTimedLyrics = timedLyrics.map(item => ({
+      const normalizedTimedLyrics = timedCues.map(item => ({
         ...item,
         normalizedText: normalize(item.text)
       }));
@@ -340,11 +414,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
         if (matchingIdx >= 0) {
           lyricIdx = matchingIdx + 1;
-          return timedLyrics[matchingIdx].time;
+          return timedCues[matchingIdx].startMs / 1000;
         }
 
-        if (lyricIdx < timedLyrics.length) {
-          return timedLyrics[lyricIdx++].time;
+        if (lyricIdx < timedCues.length) {
+          return timedCues[lyricIdx++].startMs / 1000;
         }
         return -1;
       });
@@ -372,28 +446,74 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
       return t;
     });
-  }, [actualDuration, hasTimedLyrics, timedLyrics]);
+  }, [actualDuration, hasTimedLyrics, timedCues]);
 
-  const getCenteredScrollTop = useCallback((index: number) => {
+  const getSyncedLineCues = useCallback((): SyncedLineCue[] => {
+    if (!hasTimedLyrics) return [];
+
+    const normalize = (text: string) => text
+      .replace(/\[.*?\]/g, '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const normalizedCues = timedCues.map(cue => ({
+      ...cue,
+      normalizedText: normalize(cue.text),
+    }));
+
+    let cueIndex = 0;
+    return parsedLines.current.reduce<SyncedLineCue[]>((mapped, line, lineIndex) => {
+      if (line.type !== 'lyrics') return mapped;
+
+      const normalizedLine = normalize(line.lyricsOnly || line.text);
+      const matchingIndex = normalizedCues.findIndex((cue, index) => (
+        index >= cueIndex &&
+        cue.normalizedText &&
+        normalizedLine &&
+        (
+          cue.normalizedText === normalizedLine ||
+          cue.normalizedText.includes(normalizedLine) ||
+          normalizedLine.includes(cue.normalizedText)
+        )
+      ));
+
+      const selectedIndex = matchingIndex >= 0 ? matchingIndex : cueIndex;
+      const cue = timedCues[selectedIndex];
+      if (!cue) return mapped;
+
+      cueIndex = selectedIndex + 1;
+      mapped.push({ ...cue, lineIndex });
+      return mapped;
+    }, []);
+  }, [hasTimedLyrics, timedCues]);
+
+  const getSyncedCueForLine = useCallback((lineIndex: number, cues = getSyncedLineCues()) => (
+    cues.find(cue => cue.lineIndex === lineIndex) || null
+  ), [getSyncedLineCues]);
+
+  const getCenteredScrollTop = useCallback((index: number, anchorRatio = 0.5) => {
     const el = lineRefs.current[index];
     if (el && scrollContainerRef.current) {
       const container = scrollContainerRef.current;
       const containerHeight = container.clientHeight;
       const elTop = el.offsetTop;
       const elHeight = el.clientHeight;
-      return Math.max(0, elTop - (containerHeight / 2) + (elHeight / 2));
+      return Math.max(0, elTop - (containerHeight * anchorRatio) + (elHeight / 2));
     }
     return null;
   }, []);
 
-  const getCachedCenteredScrollTop = useCallback((index: number) => {
-    if (lineCenterCacheRef.current.has(index)) {
-      return lineCenterCacheRef.current.get(index)!;
+  const getCachedCenteredScrollTop = useCallback((index: number, anchorRatio = 0.5) => {
+    const cacheKey = Math.round(anchorRatio * 1000) + index;
+    if (lineCenterCacheRef.current.has(cacheKey)) {
+      return lineCenterCacheRef.current.get(cacheKey)!;
     }
 
-    const target = getCenteredScrollTop(index);
+    const target = getCenteredScrollTop(index, anchorRatio);
     if (target !== null) {
-      lineCenterCacheRef.current.set(index, target);
+      lineCenterCacheRef.current.set(cacheKey, target);
     }
     return target;
   }, [getCenteredScrollTop]);
@@ -417,7 +537,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   }, []);
 
   const scrollToLine = useCallback((index: number, behavior: ScrollBehavior = 'smooth') => {
-    const targetScroll = getCenteredScrollTop(index);
+    const targetScroll = getCenteredScrollTop(index, isSyncedLyricsMode ? SYNCED_LYRIC_ANCHOR_RATIO : 0.5);
     if (targetScroll !== null && scrollContainerRef.current) {
       const container = scrollContainerRef.current;
       programmaticScrollUntilRef.current = Date.now() + 300;
@@ -427,11 +547,20 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         behavior
       });
     }
-  }, [getCenteredScrollTop]);
+  }, [getCenteredScrollTop, isSyncedLyricsMode]);
 
   const getAutoScrollTarget = useCallback((time: number, timings?: number[], activeIdx?: number) => {
     const container = scrollContainerRef.current;
     if (!container) return null;
+
+    if (isSyncedLyricsMode && typeof activeIdx === 'number') {
+      if (activeIdx < 0) {
+        const firstCue = getSyncedLineCues()[0];
+        return firstCue ? getCachedCenteredScrollTop(firstCue.lineIndex, SYNCED_LYRIC_ANCHOR_RATIO) ?? 0 : 0;
+      }
+
+      return getCachedCenteredScrollTop(activeIdx, SYNCED_LYRIC_ANCHOR_RATIO);
+    }
 
     if (timings && typeof activeIdx === 'number') {
       if (activeIdx < 0) {
@@ -482,7 +611,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     }
     
     return scrollableDistance * progress;
-  }, [actualDuration, getCachedCenteredScrollTop]);
+  }, [actualDuration, getCachedCenteredScrollTop, getSyncedLineCues, isSyncedLyricsMode]);
 
   const easeScrollTo = useCallback((target: number, immediate = false) => {
     const container = scrollContainerRef.current;
@@ -501,15 +630,28 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   const scrollToProgress = useCallback((time: number, timings?: number[], activeIdx?: number, immediate = false) => {
     if (Date.now() < manualScrollHoldUntilRef.current) return;
+    if (isSyncedLyricsMode && autoFollowPaused) return;
     const target = getAutoScrollTarget(time, timings, activeIdx);
     if (target !== null) easeScrollTo(target, immediate);
-  }, [easeScrollTo, getAutoScrollTarget]);
+  }, [autoFollowPaused, easeScrollTo, getAutoScrollTarget, isSyncedLyricsMode]);
 
-  const updateKaraokeFill = useCallback((time: number, timings: number[], activeIdx: number) => {
-    if (!karaokeEnabled || activeIdx < 0 || timings[activeIdx] < 0) return;
+  const updateKaraokeFill = useCallback((time: number, timings: number[], activeIdx: number, syncedCues?: SyncedLineCue[]) => {
+    if (!karaokeEnabled || activeIdx < 0) return;
 
     const activeEl = lineFillRefs.current[activeIdx];
     if (!activeEl) return;
+
+    if (isSyncedLyricsMode && syncedCues) {
+      const activeCue = getSyncedCueForLine(activeIdx, syncedCues);
+      if (!activeCue) return;
+
+      const lineDuration = Math.max(250, activeCue.endMs - activeCue.startMs);
+      const fillPercentage = Math.min(100, Math.max(0, ((time - activeCue.startMs) / lineDuration) * 100));
+      activeEl.style.setProperty('--karaoke-fill', `${fillPercentage}%`);
+      return;
+    }
+
+    if (timings[activeIdx] < 0) return;
 
     let lineEnd = timings[activeIdx] + 3;
     for (let i = activeIdx + 1; i < timings.length; i++) {
@@ -522,7 +664,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     const lineDuration = Math.max(0.25, lineEnd - timings[activeIdx]);
     const fillPercentage = Math.min(100, Math.max(0, ((time - timings[activeIdx]) / lineDuration) * 100));
     activeEl.style.setProperty('--karaoke-fill', `${fillPercentage}%`);
-  }, [karaokeEnabled]);
+  }, [getSyncedCueForLine, isSyncedLyricsMode, karaokeEnabled]);
 
   const getActiveLineForTime = useCallback((time: number, timings: number[]) => {
     let activeIdx = -1;
@@ -546,7 +688,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     const container = scrollContainerRef.current;
     manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
     autoScrollCurrentRef.current = container?.scrollTop ?? null;
-  }, []);
+    if (isSyncedLyricsMode) {
+      setAutoFollowPaused(true);
+      setShowReturnToCurrent(true);
+    }
+  }, [isSyncedLyricsMode]);
 
   const syncClockToManualScroll = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -580,6 +726,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     }
 
     const timings = getLineTimings();
+    const syncedCues = getSyncedLineCues();
     let lastFrameTime = performance.now();
 
     const scrollLoop = (frameTime: number) => {
@@ -587,12 +734,55 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       const deltaTime = Math.min(Math.max(0, (frameTime - lastFrameTime) / 1000), 0.1);
       lastFrameTime = frameTime;
 
-      const rawVideoTime = karaokeEnabled && playerReady && playerRef.current?.getCurrentTime
-        ? playerRef.current.getCurrentTime() + syncOffset
-        : null;
-      const nextTime = typeof rawVideoTime === 'number' && Number.isFinite(rawVideoTime)
-        ? rawVideoTime
-        : currentTimeRef.current + (deltaTime * playbackSpeed);
+      if (isSyncedLyricsMode) {
+        const videoTimeMs = getEstimatedPlaybackTimeMs();
+        const lyricTimeMs = videoTimeToLyricTimeMs(videoTimeMs, syncCorrection);
+        const activeCueIndex = findActiveCueIndex(syncedCues, lyricTimeMs, true);
+        const newActiveIdx = activeCueIndex >= 0 ? syncedCues[activeCueIndex].lineIndex : -1;
+        const activeChanged = newActiveIdx !== activeLineIndexRef.current;
+
+        currentTimeRef.current = lyricTimeMs / 1000;
+
+        if (activeChanged) {
+          const previousLine = activeLineIndexRef.current;
+          if (previousLine >= 0 && newActiveIdx > previousLine) {
+            lineFillRefs.current[previousLine]?.style.setProperty('--karaoke-fill', '100%');
+          }
+          activeLineIndexRef.current = newActiveIdx;
+          setActiveLineIndex(newActiveIdx);
+        }
+
+        updateKaraokeFill(lyricTimeMs, timings, activeLineIndexRef.current, syncedCues);
+        if (activeChanged || autoScrollCurrentRef.current === null) {
+          scrollToProgress(lyricTimeMs / 1000, timings, activeLineIndexRef.current);
+        }
+
+        if (frameTime - lastClockStateSyncRef.current > 250 || videoTimeMs >= actualDuration * 1000) {
+          lastClockStateSyncRef.current = frameTime;
+          setCurrentTime(lyricTimeMs / 1000);
+        }
+
+        if (videoTimeMs < actualDuration * 1000) {
+          scrollTimerRef.current = requestAnimationFrame(scrollLoop);
+        } else {
+          setIsPlaying(false);
+        }
+        return;
+      }
+
+      if (karaokeEnabled && playerReady) {
+        const videoTime = getEstimatedPlaybackTimeMs() / 1000;
+        const clampedVideoTime = Math.min(actualDuration, Math.max(0, videoTime));
+        currentTimeRef.current = clampedVideoTime;
+        if (frameTime - lastClockStateSyncRef.current > 250) {
+          lastClockStateSyncRef.current = frameTime;
+          setCurrentTime(clampedVideoTime);
+        }
+        scrollTimerRef.current = requestAnimationFrame(scrollLoop);
+        return;
+      }
+
+      const nextTime = currentTimeRef.current + (deltaTime * playbackSpeed);
       const clampedTime = Math.min(actualDuration, Math.max(0, nextTime));
       currentTimeRef.current = clampedTime;
 
@@ -625,7 +815,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
     };
-  }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, syncOffset, getLineTimings, getActiveLineForTime, scrollToProgress, updateKaraokeFill]);
+  }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, isSyncedLyricsMode, getEstimatedPlaybackTimeMs, syncCorrection, getLineTimings, getSyncedLineCues, getActiveLineForTime, scrollToProgress, updateKaraokeFill]);
 
   // Keep the lyric clock aligned to YouTube while paused. During karaoke playback, the main loop follows YouTube time.
   // Respects manualScrollHoldUntilRef so user scroll is not overridden.
@@ -633,37 +823,53 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     if (!karaokeEnabled || !playerReady || isPlaying) return;
 
     const timings = getLineTimings();
+    const syncedCues = getSyncedLineCues();
 
     let rafId: number | null = null;
     let lastSync = 0;
 
     const syncWhilePaused = (frameTime: number) => {
-      if (frameTime - lastSync < 120) {
+      if (frameTime - lastSync < 250) {
         rafId = requestAnimationFrame(syncWhilePaused);
         return;
       }
       lastSync = frameTime;
 
       if (playerRef.current?.getCurrentTime) {
-        const videoTime = playerRef.current.getCurrentTime() + syncOffset;
-        const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
-        currentTimeRef.current = clampedTime;
-        
-        const newActiveIdx = getActiveLineForTime(clampedTime, timings);
+        const clockSample = syncPlaybackClockNow(false);
+        const videoTimeMs = clockSample.mediaTimeMs;
 
-        if (newActiveIdx !== activeLineIndexRef.current && newActiveIdx >= 0) {
-          const previousLine = activeLineIndexRef.current;
-          if (previousLine >= 0 && previousLine < newActiveIdx) {
-            lineFillRefs.current[previousLine]?.style.setProperty('--karaoke-fill', '100%');
+        if (isSyncedLyricsMode) {
+          const lyricTimeMs = videoTimeToLyricTimeMs(videoTimeMs, syncCorrection);
+          const activeCueIndex = findActiveCueIndex(syncedCues, lyricTimeMs, true);
+          const newActiveIdx = activeCueIndex >= 0 ? syncedCues[activeCueIndex].lineIndex : -1;
+          currentTimeRef.current = lyricTimeMs / 1000;
+
+          if (newActiveIdx !== activeLineIndexRef.current) {
+            activeLineIndexRef.current = newActiveIdx;
+            setActiveLineIndex(newActiveIdx);
           }
-          activeLineIndexRef.current = newActiveIdx;
-          setActiveLineIndex(newActiveIdx);
-        }
-        updateKaraokeFill(clampedTime, timings, activeLineIndexRef.current);
-        setCurrentTime(clampedTime);
-        // Only auto-scroll if the user is not actively scrolling
-        if (Date.now() >= manualScrollHoldUntilRef.current) {
-          scrollToProgress(clampedTime, timings, activeLineIndexRef.current);
+
+          updateKaraokeFill(lyricTimeMs, timings, activeLineIndexRef.current, syncedCues);
+          setCurrentTime(lyricTimeMs / 1000);
+          if (Date.now() >= manualScrollHoldUntilRef.current && !autoFollowPaused) {
+            scrollToProgress(lyricTimeMs / 1000, timings, activeLineIndexRef.current);
+          }
+        } else if (!hasTimedLyrics) {
+          const clampedTime = Math.min(actualDuration, Math.max(0, videoTimeMs / 1000));
+          currentTimeRef.current = clampedTime;
+          setCurrentTime(clampedTime);
+        } else {
+          const clampedTime = Math.min(actualDuration, Math.max(0, videoTimeMs / 1000));
+          currentTimeRef.current = clampedTime;
+
+          const newActiveIdx = getActiveLineForTime(clampedTime, timings);
+          if (newActiveIdx !== activeLineIndexRef.current && newActiveIdx >= 0) {
+            activeLineIndexRef.current = newActiveIdx;
+            setActiveLineIndex(newActiveIdx);
+          }
+          updateKaraokeFill(clampedTime, timings, activeLineIndexRef.current);
+          setCurrentTime(clampedTime);
         }
       }
       rafId = requestAnimationFrame(syncWhilePaused);
@@ -674,7 +880,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [karaokeEnabled, playerReady, isPlaying, syncOffset, actualDuration, getLineTimings, getActiveLineForTime, scrollToProgress, updateKaraokeFill]);
+  }, [karaokeEnabled, playerReady, isPlaying, isSyncedLyricsMode, hasTimedLyrics, syncPlaybackClockNow, syncCorrection, autoFollowPaused, actualDuration, getLineTimings, getSyncedLineCues, getActiveLineForTime, scrollToProgress, updateKaraokeFill]);
 
   // ─── YouTube Setup ─────────────────────────────────────────────────
 
@@ -832,6 +1038,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                   if (event.target.setPlaybackRate) {
                       event.target.setPlaybackRate(playbackSpeed);
                   }
+                  syncPlaybackClockNow(false);
                   event.target.playVideo();
               },
               onError: (event: any) => handleVideoError(event?.data),
@@ -839,26 +1046,36 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                   if (event.data === 1) {
                        setPlayerReady(true);
                        setVideoError(false);
-                       const videoTime = event.target?.getCurrentTime ? event.target.getCurrentTime() + syncOffset : currentTimeRef.current;
-                       const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
+                       const clockSample = syncPlaybackClockNow(true);
+                       const videoTimeMs = clockSample.mediaTimeMs;
+                       const lyricTimeMs = isSyncedLyricsMode
+                         ? videoTimeToLyricTimeMs(videoTimeMs, syncCorrection)
+                         : videoTimeMs;
+                       const clampedTime = Math.min(actualDuration, Math.max(0, lyricTimeMs / 1000));
                        videoAnchorRef.current = {
-                         videoTime: clampedTime,
-                         lyricTime: clampedTime
+                         videoTime: videoTimeMs / 1000,
+                         lyricTime: lyricTimeMs / 1000
                        };
                        currentTimeRef.current = clampedTime;
                        setCurrentTime(currentTimeRef.current);
                        setIsPlaying(true);
                   } else if (event.data === 2 || event.data === 0) {
+                       syncPlaybackClockNow(false);
                        if (event.data === 0) {
-                         currentTimeRef.current = actualDuration;
-                         setCurrentTime(actualDuration);
+                          currentTimeRef.current = actualDuration;
+                          setCurrentTime(actualDuration);
                          scrollToProgress(actualDuration);
                        }
                        setIsPlaying(false);
-                  }
-              }
-          }
-      };
+                   }
+               },
+               onPlaybackRateChange: (event: any) => {
+                   const rate = typeof event?.data === 'number' && Number.isFinite(event.data) ? event.data : playbackSpeed;
+                   setPlaybackSpeed(rate);
+                   syncPlaybackClockNow(isPlaying);
+               },
+           }
+       };
 
       const targetId = (fallbackLevel === DIRECT_SOURCE_LEVEL && metadataId && !isMashupMode) ? metadataId : dynamicVideoId;
       if (!targetId) return;
@@ -934,24 +1151,96 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const updatePlaybackSpeed = (delta: number) => {
     setPlaybackSpeed(speed => {
       const nextSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, Math.round((speed + delta) * 20) / 20));
-      if (karaokeEnabled && playerReady && playerRef.current?.getCurrentTime) {
-        const videoTime = Math.min(actualDuration, Math.max(0, playerRef.current.getCurrentTime() + syncOffset));
+      if (karaokeEnabled && playerReady) {
+        const clockSample = syncPlaybackClockNow(isPlaying);
+        const videoTimeMs = clockSample.mediaTimeMs;
+        const lyricTimeMs = isSyncedLyricsMode
+          ? videoTimeToLyricTimeMs(videoTimeMs, syncCorrection)
+          : videoTimeMs;
         videoAnchorRef.current = {
-          videoTime,
-          lyricTime: videoTime
+          videoTime: videoTimeMs / 1000,
+          lyricTime: lyricTimeMs / 1000
         };
         playerRef.current?.setPlaybackRate?.(nextSpeed);
+        syncPlaybackClockNow(isPlaying);
       }
       return nextSpeed;
     });
   };
   // ─── Spotify-Style Line Rendering ──────────────────────────────────
 
+  const adjustLyricsEarlier = (deltaMs: number) => {
+    setSyncCorrection(correction => moveLyricsEarlier(correction, deltaMs));
+    setSyncMessage(`Lyrics ${deltaMs} ms earlier`);
+  };
+
+  const adjustLyricsLater = (deltaMs: number) => {
+    setSyncCorrection(correction => moveLyricsLater(correction, deltaMs));
+    setSyncMessage(`Lyrics ${deltaMs} ms later`);
+  };
+
+  const resetSyncCorrection = () => {
+    setSyncCorrection(resetSongSyncState());
+    setCalibrationPoint(null);
+    setSyncMessage('Sync reset');
+  };
+
+  const setCurrentLineToVideoTime = () => {
+    if (!isSyncedLyricsMode || activeLineIndexRef.current < 0) {
+      setSyncMessage('Select a synced lyric line first');
+      return;
+    }
+
+    const activeCue = getSyncedCueForLine(activeLineIndexRef.current);
+    if (!activeCue) {
+      setSyncMessage('No timestamp for this line');
+      return;
+    }
+
+    const videoTimeMs = syncPlaybackClockNow(isPlaying).mediaTimeMs;
+    const point: CalibrationPoint = {
+      videoTimeMs,
+      lyricTimeMs: activeCue.startMs,
+    };
+
+    if (!calibrationPoint) {
+      setSyncCorrection(correction => ({
+        ...correction,
+        offsetMs: point.lyricTimeMs - (correction.scale * point.videoTimeMs),
+      }));
+      setCalibrationPoint(point);
+      setSyncMessage('First sync point set');
+      return;
+    }
+
+    const calibrated = calculateTwoPointCalibration(calibrationPoint, point);
+    if (!calibrated) {
+      setSyncMessage('Calibration points too close or drift too large');
+      return;
+    }
+
+    setSyncCorrection(calibrated);
+    setCalibrationPoint(null);
+    setSyncMessage('Drift correction set');
+  };
+
+  const returnToCurrentLyric = () => {
+    setAutoFollowPaused(false);
+    setShowReturnToCurrent(false);
+    manualScrollHoldUntilRef.current = 0;
+    const timings = getLineTimings();
+    const currentIdx = activeLineIndexRef.current;
+    if (currentIdx >= 0) {
+      scrollToProgress(currentTimeRef.current, timings, currentIdx, true);
+    }
+  };
+
   const renderStructuredContent = () => {
       const lines = parsedLines.current;
       if (lines.length === 0) return null;
 
       const timings = getLineTimings();
+      const syncedCues = getSyncedLineCues();
 
       return lines.map((line, idx) => {
           if (line.type === 'header') {
@@ -985,7 +1274,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
           // Karaoke fill is animated imperatively via --karaoke-fill so playback
           // does not re-render the entire lyric list every frame.
           let initialFillPercentage = 0;
-          if (isActive && karaokeEnabled && timings[idx] >= 0) {
+          const syncedCue = isSyncedLyricsMode ? getSyncedCueForLine(idx, syncedCues) : null;
+          if (isActive && isSyncedLyricsMode && syncedCue) {
+            const lineDuration = Math.max(250, syncedCue.endMs - syncedCue.startMs);
+            const elapsed = (currentTimeRef.current * 1000) - syncedCue.startMs;
+            initialFillPercentage = Math.min(100, Math.max(0, (elapsed / lineDuration) * 100));
+          } else if (isActive && karaokeEnabled && timings[idx] >= 0) {
             const lineStart = timings[idx];
             let lineEnd = lineStart + 3; // Default 3s per line
             for (let j = idx + 1; j < timings.length; j++) {
@@ -1012,16 +1306,28 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                 onClick={() => {
                   const timings = getLineTimings();
                   const lineTime = timings[idx];
-                  if (karaokeEnabled) {
+                  const syncedCue = isSyncedLyricsMode ? getSyncedCueForLine(idx) : null;
+                  if (isSyncedLyricsMode && syncedCue) {
+                    const videoTime = Math.max(0, lyricTimeToVideoTimeMs(syncedCue.startMs, syncCorrection) / 1000);
+                    currentTimeRef.current = syncedCue.startMs / 1000;
+                    activeLineIndexRef.current = idx;
+                    setCurrentTime(syncedCue.startMs / 1000);
+                    setActiveLineIndex(idx);
+                    setAutoFollowPaused(false);
+                    setShowReturnToCurrent(false);
+                    videoAnchorRef.current = { videoTime, lyricTime: syncedCue.startMs / 1000 };
+                    scrollToProgress(syncedCue.startMs / 1000, timings, idx, true);
+                    if (playerRef.current?.seekTo) {
+                      playerRef.current.seekTo(videoTime, true);
+                      syncPlaybackClockNow(isPlaying);
+                    }
+                  } else if (karaokeEnabled) {
                     setActiveLineIndex(idx);
                     if (lineTime >= 0) {
                       currentTimeRef.current = lineTime;
                       setCurrentTime(lineTime);
                       videoAnchorRef.current = { videoTime: lineTime, lyricTime: lineTime };
                       scrollToProgress(lineTime);
-                    }
-                    if (lineTime >= 0 && playerRef.current?.seekTo) {
-                      playerRef.current.seekTo(Math.max(0, lineTime - syncOffset), true);
                     }
                   } else if (lineTime >= 0) {
                     currentTimeRef.current = lineTime;
@@ -1083,16 +1389,26 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const handlePlayPause = () => {
     let startedFromVideo = false;
     if (!isPlaying && karaokeEnabled && playerReady && playerRef.current?.getCurrentTime) {
-      const videoTime = playerRef.current.getCurrentTime() + syncOffset;
-      const clampedTime = Math.min(actualDuration, Math.max(0, videoTime));
+      const clockSample = syncPlaybackClockNow(false);
+      const videoTimeMs = clockSample.mediaTimeMs;
+      const lyricTimeMs = isSyncedLyricsMode
+        ? videoTimeToLyricTimeMs(videoTimeMs, syncCorrection)
+        : videoTimeMs;
+      const clampedTime = Math.min(actualDuration, Math.max(0, lyricTimeMs / 1000));
       videoAnchorRef.current = {
-        videoTime: clampedTime,
-        lyricTime: clampedTime
+        videoTime: videoTimeMs / 1000,
+        lyricTime: lyricTimeMs / 1000
       };
       currentTimeRef.current = clampedTime;
       setCurrentTime(currentTimeRef.current);
+      const syncedCues = getSyncedLineCues();
+      const activeCueIndex = isSyncedLyricsMode
+        ? findActiveCueIndex(syncedCues, lyricTimeMs, true)
+        : -1;
       const timings = getLineTimings();
-      const syncedLine = getActiveLineForTime(currentTimeRef.current, timings);
+      const syncedLine = activeCueIndex >= 0
+        ? syncedCues[activeCueIndex].lineIndex
+        : getActiveLineForTime(currentTimeRef.current, timings);
       if (syncedLine >= 0) {
         activeLineIndexRef.current = syncedLine;
         setActiveLineIndex(syncedLine);
@@ -1316,14 +1632,34 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                       <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
                           <div className="flex justify-between items-center mb-2">
                               <label className="text-[10px] text-indigo-400/80 uppercase font-bold tracking-widest flex items-center gap-2"><Timer className="w-3 h-3" /> Sync</label>
-                              <span className="text-xs font-mono text-indigo-300/60">{syncOffset > 0 ? `+${syncOffset}s` : `${syncOffset}s`}</span>
+                              <span className="text-xs font-mono text-indigo-300/60">
+                                {syncCorrection.offsetMs >= 0 ? `+${syncCorrection.offsetMs}` : syncCorrection.offsetMs} ms
+                                {syncCorrection.scale !== 1 ? ` / ${syncCorrection.scale.toFixed(4)}x` : ''}
+                              </span>
                           </div>
-                          <div className="flex gap-2 items-center">
-                              <button onClick={() => setSyncOffset(s => Math.max(-30, s - 1))} className="p-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-white transition-all"><Minus className="w-3 h-3"/></button>
-                              <input type="range" min="-30" max="30" step="1" value={syncOffset} onChange={e => setSyncOffset(parseFloat(e.target.value))} className="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-                              <button onClick={() => setSyncOffset(s => Math.min(30, s + 1))} className="p-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-white transition-all"><Plus className="w-3 h-3"/></button>
-                              <button onClick={() => setSyncOffset(0)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-200 uppercase tracking-wider transition-all border border-white/[0.06]">Reset</button>
-                          </div>
+                          {hasTimedLyrics ? (
+                            <>
+                              <div className="grid grid-cols-2 gap-2">
+                                  <button onClick={() => adjustLyricsEarlier(100)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.06]">Earlier 100</button>
+                                  <button onClick={() => adjustLyricsLater(100)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.06]">Later 100</button>
+                                  <button onClick={() => adjustLyricsEarlier(500)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.06]">Earlier 500</button>
+                                  <button onClick={() => adjustLyricsLater(500)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.06]">Later 500</button>
+                              </div>
+                              <div className="flex gap-2 mt-2">
+                                  <button onClick={setCurrentLineToVideoTime} className="flex-1 px-2.5 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-indigo-500/30">Set Line</button>
+                                  <button onClick={resetSyncCorrection} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-200 uppercase tracking-wider transition-all border border-white/[0.06]">Reset</button>
+                              </div>
+                              {(syncMessage || calibrationPoint) && (
+                                <div className="mt-2 text-[10px] text-indigo-300/70 font-medium">
+                                  {syncMessage || 'First sync point ready'}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="text-xs text-amber-200/70 leading-snug">
+                              Synced lyrics unavailable. Plain lyrics stay in Free Teleprompter mode.
+                            </div>
+                          )}
                       </div>
 
                       <div>
@@ -1345,6 +1681,15 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              </div>
          )}
       </div>
+
+      {showReturnToCurrent && isSyncedLyricsMode && (
+        <button
+          onClick={returnToCurrentLyric}
+          className="absolute left-1/2 bottom-24 md:bottom-28 -translate-x-1/2 z-50 px-4 py-2.5 bg-indigo-500/90 hover:bg-indigo-400 text-white rounded-full text-xs font-bold uppercase tracking-wider shadow-2xl border border-white/10 backdrop-blur-lg transition-all"
+        >
+          Return to current lyric
+        </button>
+      )}
 
       {/* Playback Footer - Now an overlay that appears on hover */}
       <div className={`absolute bottom-0 left-0 right-0 h-20 md:h-24 pb-safe border-t flex items-center justify-start md:justify-center gap-2 md:gap-8 z-50 shrink-0 shadow-[0_-5px_30px_rgba(0,0,0,0.3)] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 overflow-x-auto px-2 md:px-0 ${
