@@ -58,6 +58,7 @@ const DIRECT_SOURCE_LEVEL = 0;
 type PersistedTeleprompterState = {
   karaokeEnabled?: boolean;
   playbackSpeed?: number;
+  youtubePlaybackRate?: number;
   fontSize?: number;
   handedness?: Handedness;
   splitRatio?: number;
@@ -177,6 +178,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const persistedState = useRef<PersistedTeleprompterState>(readTeleprompterState());
   const [karaokeEnabled, setKaraokeEnabled] = useState(() => Boolean(persistedState.current.karaokeEnabled));
   const [playbackSpeed, setPlaybackSpeed] = useState(() => clampNumber(persistedState.current.playbackSpeed, 1, MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED));
+  const [youtubePlaybackRate, setYoutubePlaybackRate] = useState(() => clampNumber(persistedState.current.youtubePlaybackRate, 1, 0.25, MAX_PLAYBACK_SPEED));
   
   // SPOTIFY-STYLE SCROLL STATE
   const [isPlaying, setIsPlaying] = useState(false);
@@ -249,11 +251,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     localStorage.setItem(TELEPROMPTER_STATE_KEY, JSON.stringify({
       karaokeEnabled,
       playbackSpeed,
+      youtubePlaybackRate,
       fontSize,
       handedness,
       splitRatio
     }));
-  }, [karaokeEnabled, playbackSpeed, fontSize, handedness, splitRatio]);
+  }, [karaokeEnabled, playbackSpeed, youtubePlaybackRate, fontSize, handedness, splitRatio]);
 
   useEffect(() => {
     setSyncCorrection(readLyricsSyncCorrection(activeSyncTarget));
@@ -270,9 +273,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   useEffect(() => {
     if (!karaokeEnabled || !playerReady || !playerRef.current?.setPlaybackRate) return;
-    playerRef.current.setPlaybackRate(playbackSpeed);
+    playerRef.current.setPlaybackRate(youtubePlaybackRate);
     syncPlaybackClockNow(isPlaying);
-  }, [isPlaying, karaokeEnabled, playerReady, playbackSpeed, syncPlaybackClockNow]);
+  }, [isPlaying, karaokeEnabled, playerReady, youtubePlaybackRate, syncPlaybackClockNow]);
 
   // ─── Resizable Split Drag Handlers ─────────────────────────────────
 
@@ -1036,7 +1039,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                       if (d > 0 && !getSongMetadataDuration(song)) setActualDuration(d);
                   }
                   if (event.target.setPlaybackRate) {
-                      event.target.setPlaybackRate(playbackSpeed);
+                      event.target.setPlaybackRate(youtubePlaybackRate);
                   }
                   syncPlaybackClockNow(false);
                   event.target.playVideo();
@@ -1070,8 +1073,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                    }
                },
                onPlaybackRateChange: (event: any) => {
-                   const rate = typeof event?.data === 'number' && Number.isFinite(event.data) ? event.data : playbackSpeed;
-                   setPlaybackSpeed(rate);
+                   const rate = typeof event?.data === 'number' && Number.isFinite(event.data) ? event.data : youtubePlaybackRate;
+                   setYoutubePlaybackRate(rate);
                    syncPlaybackClockNow(isPlaying);
                },
            }
@@ -1151,20 +1154,25 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const updatePlaybackSpeed = (delta: number) => {
     setPlaybackSpeed(speed => {
       const nextSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, Math.round((speed + delta) * 20) / 20));
+      return nextSpeed;
+    });
+  };
+
+  const updateYouTubePlaybackRate = (delta: number) => {
+    setYoutubePlaybackRate(rate => {
+      const nextRate = Math.max(0.25, Math.min(MAX_PLAYBACK_SPEED, Math.round((rate + delta) * 4) / 4));
       if (karaokeEnabled && playerReady) {
         const clockSample = syncPlaybackClockNow(isPlaying);
         const videoTimeMs = clockSample.mediaTimeMs;
-        const lyricTimeMs = isSyncedLyricsMode
-          ? videoTimeToLyricTimeMs(videoTimeMs, syncCorrection)
-          : videoTimeMs;
+        const lyricTimeMs = videoTimeToLyricTimeMs(videoTimeMs, syncCorrection);
         videoAnchorRef.current = {
           videoTime: videoTimeMs / 1000,
           lyricTime: lyricTimeMs / 1000
         };
-        playerRef.current?.setPlaybackRate?.(nextSpeed);
+        playerRef.current?.setPlaybackRate?.(nextRate);
         syncPlaybackClockNow(isPlaying);
       }
-      return nextSpeed;
+      return nextRate;
     });
   };
   // ─── Spotify-Style Line Rendering ──────────────────────────────────
@@ -1440,6 +1448,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   };
 
   const isAiGenerated = (song as any).source === 'ai';
+  const footerSpeed = isSyncedLyricsMode ? youtubePlaybackRate : playbackSpeed;
+  const updateFooterSpeed = isSyncedLyricsMode ? updateYouTubePlaybackRate : updatePlaybackSpeed;
+  const footerSpeedLabel = isSyncedLyricsMode ? 'Video' : 'Speed';
   const activeTranscriptLine = activeLineIndex >= 0
     ? parsedLines.current[activeLineIndex]?.lyricsOnly || parsedLines.current[activeLineIndex]?.text || ''
     : '';
@@ -1706,12 +1717,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              
              {/* Playback Speed Control */}
              <div className="flex items-center gap-1 md:gap-2 px-1.5 md:px-4 border-r border-white/[0.06] pr-2 md:pr-6">
-                 <button onClick={() => updatePlaybackSpeed(-0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
+                 <button onClick={() => updateFooterSpeed(isSyncedLyricsMode ? -0.25 : -0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
                  <div className="flex flex-col items-center w-12 md:w-16">
-                    <span className="text-lg md:text-2xl font-bold text-blue-400">{playbackSpeed.toFixed(2).replace(/0$/, '')}x</span>
-                    <span className="text-[8px] text-gray-400 uppercase tracking-widest font-bold">Speed</span>
+                    <span className="text-lg md:text-2xl font-bold text-blue-400">{footerSpeed.toFixed(2).replace(/0$/, '')}x</span>
+                    <span className="text-[8px] text-gray-400 uppercase tracking-widest font-bold">{footerSpeedLabel}</span>
                  </div>
-                 <button onClick={() => updatePlaybackSpeed(0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Plus className="w-4 h-4"/></button>
+                 <button onClick={() => updateFooterSpeed(isSyncedLyricsMode ? 0.25 : 0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Plus className="w-4 h-4"/></button>
              </div>
              
              <button onClick={handlePlayPause} className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-2xl transition-all transform active:scale-90 border-2 ${
