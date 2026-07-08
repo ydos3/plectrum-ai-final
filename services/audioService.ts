@@ -6,24 +6,27 @@ let masterCompressor: DynamicsCompressorNode | null = null;
 let masterGain: GainNode | null = null;
 let masterLimiter: WaveShaperNode | null = null;
 let outputCeiling: GainNode | null = null;
+let masterMixBus: GainNode | null = null;
 let reverbConvolver: ConvolverNode | null = null;
 let reverbWet: GainNode | null = null;
-let resonanceAmount = 0.25; // 0..1, controllable via setResonance()
-const MASTER_OUTPUT_GAIN = 1.18;
+let resonanceAmount = 0.16; // 0..1, controllable via setResonance()
+// Lowered from 1.18 → 1.0: combined with the reverb send it was pushing the
+// mix past 0 dBFS and cracking (hard clipping) during fast fingerstyle runs.
+const MASTER_OUTPUT_GAIN = 1.0;
 const OUTPUT_CEILING_GAIN = 0.92;
-const MAX_ACTIVE_VOICES = 36;
-const MAX_REVERB_WET = 0.9;
+const MAX_ACTIVE_VOICES = 28;
+const MAX_REVERB_WET = 0.6;
 
 // Generate a short, warm plate-style impulse response for the reverb send.
-const buildImpulseResponse = (ctx: AudioContext, seconds = 2.4, decay = 3.2) => {
+const buildImpulseResponse = (ctx: AudioContext, seconds = 2.2, decay = 3.4) => {
   const rate = ctx.sampleRate;
   const length = Math.max(1, Math.floor(rate * seconds));
   const impulse = ctx.createBuffer(2, length, rate);
   for (let ch = 0; ch < 2; ch++) {
     const data = impulse.getChannelData(ch);
     for (let i = 0; i < length; i++) {
-      // Decaying noise → smooth diffuse tail.
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+      // Decaying noise → smooth diffuse tail (scaled down for headroom).
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay) * 0.6;
     }
   }
   return impulse;
@@ -110,18 +113,25 @@ const initAudio = () => {
 
     masterLimiter = audioCtx.createWaveShaper();
     masterLimiter.curve = createSoftLimiterCurve();
-    masterLimiter.oversample = '2x';
+    masterLimiter.oversample = '4x';
 
     outputCeiling = audioCtx.createGain();
     outputCeiling.gain.value = OUTPUT_CEILING_GAIN;
-    
+
+    // Mix bus where the dry signal and the reverb send are summed BEFORE the
+    // soft limiter, so the whole mix (incl. reverb tail) is limited and never
+    // hard-clips/cracks.
+    masterMixBus = audioCtx.createGain();
+    masterMixBus.gain.value = 1;
+
     masterGain.connect(masterCompressor);
-    masterCompressor.connect(masterLimiter);
+    masterCompressor.connect(masterMixBus);
+    masterMixBus.connect(masterLimiter);
     masterLimiter.connect(outputCeiling);
     outputCeiling.connect(audioCtx.destination);
 
-    // Parallel reverb send for resonance/sustain. Additive and defensive — if
-    // anything fails the dry signal above keeps working untouched.
+    // Parallel reverb send for resonance/sustain. Feeds the mix bus (pre-limiter)
+    // and is defensive — if anything fails the dry signal keeps working.
     try {
       reverbConvolver = audioCtx.createConvolver();
       reverbConvolver.buffer = buildImpulseResponse(audioCtx);
@@ -129,7 +139,7 @@ const initAudio = () => {
       reverbWet.gain.value = resonanceAmount * MAX_REVERB_WET;
       masterGain.connect(reverbConvolver);
       reverbConvolver.connect(reverbWet);
-      reverbWet.connect(outputCeiling);
+      reverbWet.connect(masterMixBus);
     } catch {
       reverbConvolver = null;
       reverbWet = null;

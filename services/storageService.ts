@@ -54,6 +54,91 @@ const BUILTIN_DEMO_SONGS: Song[] = [
         createdAt: 0,
         content: CHANNA_DEMO_CONTENT,
     },
+    // ── Original, copyright-clean practice pieces (no lyrics) ──────────────────
+    {
+        id: 'builtin_12bar_blues_e',
+        title: '12-Bar Blues in E',
+        artist: 'Plectrum · Practice Study',
+        collection: 'Practice Studies',
+        status: 'complete',
+        isBuiltIn: true,
+        key: 'E',
+        capo: 0,
+        strummingPattern: 'D-D-U-U-D-U',
+        language: 'English',
+        createdAt: 0,
+        content: `### [Turnaround Intro]
+[E7] [E7] [A7] [B7]
+
+### [12-Bar Form]
+[E7] [E7] [E7] [E7]
+[A7] [A7] [E7] [E7]
+[B7] [A7] [E7] [B7]
+
+### [Shuffle Feel]
+Swing the eighths. Palm-mute the low strings for a classic blues bounce.`,
+    },
+    {
+        id: 'builtin_four_chord_g',
+        title: 'Four-Chord Progression in G',
+        artist: 'Plectrum · Practice Study',
+        collection: 'Practice Studies',
+        status: 'complete',
+        isBuiltIn: true,
+        key: 'G',
+        capo: 0,
+        strummingPattern: 'D-D-U-U-D-U',
+        language: 'English',
+        createdAt: 0,
+        content: `### [Loop A]
+[G] [D] [Em] [C]
+
+### [Loop B]
+[G] [D] [C] [C]
+
+### [Practice]
+The classic I–V–vi–IV loop. Keep the strum steady, switch chords cleanly on the down-beat.`,
+    },
+    {
+        id: 'builtin_andalusian_am',
+        title: 'Andalusian Cadence in Am',
+        artist: 'Plectrum · Practice Study',
+        collection: 'Practice Studies',
+        status: 'complete',
+        isBuiltIn: true,
+        key: 'Am',
+        capo: 0,
+        strummingPattern: 'D-DU-UDU',
+        language: 'English',
+        createdAt: 0,
+        content: `### [Descending Line]
+[Am] [G] [F] [E7]
+
+### [Resolve]
+[Am] [G] [F] [E7] [Am]
+
+### [Feel]
+A dramatic flamenco-flavoured descent. Let the [E7] ring before resolving home to [Am].`,
+    },
+    {
+        id: 'builtin_travis_c',
+        title: 'Travis Picking Study in C',
+        artist: 'Plectrum · Fingerstyle Study',
+        collection: 'Practice Studies',
+        status: 'demo',
+        isBuiltIn: true,
+        key: 'C',
+        capo: 0,
+        language: 'English',
+        createdAt: 0,
+        fingerstyleTab: 'A3-G0-D2-B1-A3-e0-D2-B1-E0-G0-D2-B1-E0-e0-D2-B1-A3-G0-D2-e0-A3-B1-D2-G0-E3-G0-D0-B0-E3-e3-D0-B0',
+        content: `### [Fingerstyle Study — Tabs Only]
+Alternating-bass (Travis) picking over C and G.
+Open in Fretboard Lab to play the full tab.
+
+### [Tip]
+Keep the thumb steady on the bass notes while the fingers fill the off-beats.`,
+    },
 ];
 
 const DEFAULT_SONGS: Song[] = [
