@@ -1,43 +1,44 @@
-// Canvas stage engine for Air Strum: draws thick metallic guitar strings with a
-// real, decaying sine-wave vibration when plucked, plus colorful, wispy, fluid
-// particles (soft abstract blobs + downward "water trickle" droplets) in
-// maroon / magenta / purple tones. Pure canvas 2D + rAF, no dependencies.
+// Canvas stage engine for Air Strum.
+//
+// Strings: thick metallic guitar strings that vibrate TIGHTLY like a real
+// string — a small, fast motion-blur spindle that settles quickly (not a
+// floppy sine wave).
+//
+// Ambience: calm, peaceful water ripples (koi-pond / mirror surface) that
+// radiate out from where a string is plucked and fade — no smoke, no clutter.
 
-type ParticleKind = 'blob' | 'trickle';
-
-interface Particle {
+interface Ripple {
   x: number;
   y: number;
-  vx: number;
-  vy: number;
+  delay: number;   // ms before it starts expanding
   life: number;
   max: number;
-  size: number;
-  kind: ParticleKind;
-  seed: number;
+  maxR: number;
   color: [number, number, number];
 }
 
-// Maroon, magenta, purple, rose, violet — colourful and "vibing".
-const PALETTE: [number, number, number][] = [
-  [136, 19, 55],
-  [192, 38, 211],
-  [124, 58, 237],
-  [225, 29, 72],
-  [167, 139, 250],
-];
-
 interface StringState {
-  amp: number;        // current vibration amplitude (px)
-  freq: number;       // visual oscillation frequency (Hz)
+  amp: number;       // current vibration amplitude (px) — small, guitar-like
+  freq: number;      // visual shimmer frequency (Hz)
   phase: number;
   thickness: number;
 }
 
+// Serene, moonlit-water palette (soft blues, teal, periwinkle, warm white).
+const RIPPLE_COLORS: [number, number, number][] = [
+  [173, 216, 230],
+  [150, 220, 210],
+  [180, 200, 255],
+  [255, 244, 224],
+  [200, 180, 255],
+];
+
+const MAX_STRING_AMP = 7;
+
 export class ParticleField {
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
-  private particles: Particle[] = [];
+  private ripples: Ripple[] = [];
   private strings: StringState[] = [];
   private stringLeft = 0.1;
   private stringSpan = 0.8;
@@ -58,9 +59,9 @@ export class ParticleField {
     this.stringSpan = span;
     this.strings = Array.from({ length: count }, (_, i) => ({
       amp: 0,
-      freq: 6.5 + i * 1.4,
+      freq: 18 + i * 2.5, // higher strings shimmer faster
       phase: this.rand() * 6.28,
-      thickness: 8 - i * 0.8, // bass strings thicker
+      thickness: 7 - i * 0.7,
     }));
   }
 
@@ -78,59 +79,35 @@ export class ParticleField {
     return (this.stringLeft + (i / n) * this.stringSpan) * this.w;
   }
 
-  /** Pluck string i: kick its vibration and release a small colourful flourish. */
+  /** Pluck string i: kick a tight vibration + send out calm water ripples. */
   pluck(i: number, intensity = 1) {
     const s = this.strings[i];
     if (s) {
-      s.amp = (10 + (this.strings.length - 1 - i) * 1.2) * intensity;
+      s.amp = MAX_STRING_AMP * Math.min(1, intensity);
       s.phase = this.rand() * 6.28;
     }
-    this.spawnAt(this.stringX(i), intensity);
+    const x = this.stringX(i);
+    const y = this.h * 0.5;
+    const color = RIPPLE_COLORS[Math.floor(this.rand() * RIPPLE_COLORS.length)];
+    const rings = 3;
+    for (let k = 0; k < rings; k++) {
+      this.ripples.push({
+        x,
+        y: y + (this.rand() - 0.5) * this.h * 0.08,
+        delay: k * 150,
+        life: 0,
+        max: 1600 + this.rand() * 600,
+        maxR: this.h * (0.30 + this.rand() * 0.18),
+        color,
+      });
+    }
     this.ensureLoop();
-  }
-
-  private spawnAt(x: number, intensity: number) {
-    const h = this.h;
-    const y = h * 0.5;
-    const pick = () => PALETTE[Math.floor(this.rand() * PALETTE.length)];
-    // A couple of soft rising blobs (abstract, wispy).
-    const blobs = 2 + Math.round(intensity);
-    for (let k = 0; k < blobs; k++) {
-      this.particles.push({
-        x: x + (this.rand() - 0.5) * 22,
-        y: y + (this.rand() - 0.5) * h * 0.14,
-        vx: (this.rand() - 0.5) * 26,
-        vy: -(10 + this.rand() * 34),
-        life: 0,
-        max: 900 + this.rand() * 900,
-        size: 10 + this.rand() * 16,
-        kind: 'blob',
-        seed: this.rand() * 6.28,
-        color: pick(),
-      });
-    }
-    // Water-trickle droplets flowing down.
-    const drops = 2 + Math.round(intensity);
-    for (let k = 0; k < drops; k++) {
-      this.particles.push({
-        x: x + (this.rand() - 0.5) * 10,
-        y: y + (this.rand() - 0.3) * h * 0.06,
-        vx: (this.rand() - 0.5) * 10,
-        vy: 18 + this.rand() * 26,
-        life: 0,
-        max: 1100 + this.rand() * 900,
-        size: 2 + this.rand() * 2.4,
-        kind: 'trickle',
-        seed: this.rand() * 6.28,
-        color: pick(),
-      });
-    }
   }
 
   start() { this.ensureLoop(); }
 
   private active() {
-    return this.particles.length > 0 || this.strings.some(s => s.amp > 0.4);
+    return this.ripples.length > 0 || this.strings.some(s => s.amp > 0.3);
   }
 
   private ensureLoop() {
@@ -143,33 +120,21 @@ export class ParticleField {
       this.timeSec += dt / 1000;
       this.update(dt);
       this.draw();
-      // Keep looping while strings are ringing or particles are alive.
       this.raf = this.active() ? requestAnimationFrame(step) : null;
     };
     this.raf = requestAnimationFrame(step);
   }
 
   private update(dt: number) {
-    const secs = dt / 1000;
-    const decay = Math.pow(0.5, dt / 300); // vibration half-life ~300ms
+    const decay = Math.pow(0.5, dt / 150); // tight settle (~150ms half-life)
     for (const s of this.strings) {
       s.amp *= decay;
-      if (s.amp < 0.4) s.amp = 0;
+      if (s.amp < 0.3) s.amp = 0;
     }
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
-      p.life += dt;
-      if (p.life >= p.max) { this.particles.splice(i, 1); continue; }
-      if (p.kind === 'trickle') {
-        p.vy += 70 * secs;                 // gravity for liquid
-        p.vx += Math.sin(this.timeSec * 3 + p.seed) * 10 * secs;
-      } else {
-        p.vy *= 0.985;
-        p.vx += Math.sin(this.timeSec * 1.6 + p.seed) * 8 * secs;
-        p.size += 12 * secs;               // slowly dissipate
-      }
-      p.x += p.vx * secs;
-      p.y += p.vy * secs;
+    for (let i = this.ripples.length - 1; i >= 0; i--) {
+      const r = this.ripples[i];
+      r.life += dt;
+      if (r.life >= r.max) this.ripples.splice(i, 1);
     }
   }
 
@@ -179,83 +144,91 @@ export class ParticleField {
     const h = this.h;
     ctx.clearRect(0, 0, w, h);
 
-    // ── Strings ──────────────────────────────────────────────────────────────
+    // ── Peaceful water ripples (mirror / koi-pond surface) ─────────────────────
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = 1.5;
+    for (const rp of this.ripples) {
+      const active = rp.life - rp.delay;
+      if (active <= 0) continue;
+      const span = rp.max - rp.delay;
+      const prog = Math.min(1, active / span);
+      const radius = prog * rp.maxR;
+      const alpha = (1 - prog) * 0.35;
+      if (alpha <= 0.01 || radius <= 0.5) continue;
+      const [r, g, b] = rp.color;
+      // Outer ring
+      ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
+      ctx.beginPath();
+      ctx.ellipse(rp.x, rp.y, radius, radius * 0.42, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      // Inner shimmer ring (mirror sheen)
+      const r2 = radius * 0.62;
+      ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.5})`;
+      ctx.beginPath();
+      ctx.ellipse(rp.x, rp.y, r2, r2 * 0.42, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // ── Strings ────────────────────────────────────────────────────────────────
     for (let i = 0; i < this.strings.length; i++) {
       const s = this.strings[i];
       const baseX = this.stringX(i);
-      const ringing = s.amp > 0.4;
+      const ringing = s.amp > 0.3;
+
+      // Motion-blur spindle: a translucent lens widest at the centre, showing
+      // the string vibrating tightly. Settles fast.
+      if (ringing) {
+        const A = s.amp * (0.85 + 0.15 * Math.sin(this.timeSec * s.freq * 6.28 + s.phase));
+        const segs = 24;
+        ctx.beginPath();
+        for (let k = 0; k <= segs; k++) {
+          const yn = k / segs;
+          const wgt = Math.sin(Math.PI * yn);
+          const x = baseX - A * wgt;
+          ctx.lineTo(x, yn * h);
+        }
+        for (let k = segs; k >= 0; k--) {
+          const yn = k / segs;
+          const wgt = Math.sin(Math.PI * yn);
+          const x = baseX + A * wgt;
+          ctx.lineTo(x, yn * h);
+        }
+        ctx.closePath();
+        ctx.fillStyle = `rgba(253,230,138,${(s.amp / MAX_STRING_AMP) * 0.4})`;
+        ctx.fill();
+      }
+
       const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, 'rgba(255,240,205,0.35)');
+      grad.addColorStop(0, 'rgba(255,240,205,0.4)');
       grad.addColorStop(0.25, '#fde68a');
       grad.addColorStop(0.55, '#f59e0b');
       grad.addColorStop(0.8, '#b45309');
-      grad.addColorStop(1, 'rgba(120,53,15,0.35)');
+      grad.addColorStop(1, 'rgba(120,53,15,0.4)');
       ctx.strokeStyle = grad;
       ctx.lineWidth = s.thickness;
       ctx.lineCap = 'round';
-      ctx.shadowColor = 'rgba(245,158,11,0.9)';
-      ctx.shadowBlur = ringing ? 16 : 6;
+      ctx.shadowColor = 'rgba(245,158,11,0.85)';
+      ctx.shadowBlur = ringing ? 12 : 5;
 
+      // Crisp centreline (oscillates within the spindle for a taut-string feel).
+      const osc = ringing ? s.amp * 0.5 * Math.sin(this.timeSec * s.freq * 6.28 + s.phase) : 0;
       ctx.beginPath();
-      const segs = 28;
+      const segs = ringing ? 16 : 1;
       for (let k = 0; k <= segs; k++) {
         const yn = k / segs;
-        const env = Math.sin(Math.PI * yn); // fundamental standing wave
-        const off = s.amp * env * Math.sin(this.timeSec * s.freq * 6.28 + s.phase);
-        const x = baseX + off;
-        const y = yn * h;
-        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        const x = baseX + osc * Math.sin(Math.PI * yn);
+        if (k === 0) ctx.moveTo(x, 0); else ctx.lineTo(x, yn * h);
       }
       ctx.stroke();
     }
     ctx.shadowBlur = 0;
-
-    // ── Water trickle (liquid droplets) ────────────────────────────────────────
-    ctx.globalCompositeOperation = 'source-over';
-    for (const p of this.particles) {
-      if (p.kind !== 'trickle') continue;
-      const t = p.life / p.max;
-      const alpha = Math.sin(Math.min(1, t) * Math.PI) * 0.5;
-      if (alpha <= 0.01) continue;
-      const [r, g, b] = p.color;
-      const len = p.size * 4.5;
-      const trail = ctx.createLinearGradient(p.x, p.y - len, p.x, p.y + p.size);
-      trail.addColorStop(0, `rgba(${r},${g},${b},0)`);
-      trail.addColorStop(1, `rgba(${r},${g},${b},${alpha})`);
-      ctx.fillStyle = trail;
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y, p.size, len, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = `rgba(${Math.min(255, r + 60)},${Math.min(255, g + 60)},${Math.min(255, b + 60)},${alpha})`;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y + p.size * 0.6, p.size * 0.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // ── Soft colourful blobs (additive glow) ───────────────────────────────────
-    ctx.globalCompositeOperation = 'lighter';
-    for (const p of this.particles) {
-      if (p.kind !== 'blob') continue;
-      const t = p.life / p.max;
-      const alpha = Math.sin(Math.min(1, t) * Math.PI) * 0.22;
-      if (alpha <= 0.01) continue;
-      const [r, g, b] = p.color;
-      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
-      grad.addColorStop(0, `rgba(${r},${g},${b},${alpha})`);
-      grad.addColorStop(0.6, `rgba(${r},${g},${b},${alpha * 0.4})`);
-      grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalCompositeOperation = 'source-over';
   }
 
   destroy() {
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.raf = null;
-    this.particles = [];
+    this.ripples = [];
     try { this.ctx.clearRect(0, 0, this.w, this.h); } catch { /* ignore */ }
   }
 }

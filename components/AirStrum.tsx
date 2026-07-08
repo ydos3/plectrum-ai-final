@@ -24,8 +24,9 @@ const SCALE_PRESETS: ScalePreset[] = [
 const STRING_LABELS = ['E', 'A', 'D', 'G', 'B', 'e'];
 const STRINGS_LEFT = 0.10;
 const STRINGS_SPAN = 0.80;
-const NOTE_ZONE_TOP = 0.30;    // upper 30% of the stage = "point to pick a chord"
-const NOTE_SELECT_DWELL = 300; // ms of pointing before a chord commits
+const NOTE_ZONE_TOP = 0.36;    // upper portion of the stage = "point to pick a chord"
+const NOTE_SELECT_DWELL = 240; // ms of pointing before a chord commits
+const MOTION_GATE = 0.004;     // low so gentle hand movement still registers
 
 const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const [cameraState, setCameraState] = useState<CameraState>('idle');
@@ -35,6 +36,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const [handInFrame, setHandInFrame] = useState(false);
   const [pointer, setPointer] = useState<{ x: number; y: number; mode: 'note' | 'strum' } | null>(null);
   const [hoverNote, setHoverNote] = useState(-1);
+  const [hoverProgress, setHoverProgress] = useState(0);
   const [playingString, setPlayingString] = useState(-1);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -46,7 +48,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const rafRef = useRef<number | null>(null);
   const prevLumaRef = useRef<Float32Array | null>(null);
   const lumaRef = useRef<Float32Array | null>(null);
-  const activityRef = useRef<{ x: number; y: number; mode: 'note' | 'strum' | null; string: number; mag: number; t: number }>({ x: 0.5, y: 0.5, mode: null, string: -1, mag: 0, t: 0 });
+  const activityRef = useRef<{ x: number; y: number; mode: 'note' | 'strum' | null; string: number; mag: number; t: number; progress: number }>({ x: 0.5, y: 0.5, mode: null, string: -1, mag: 0, t: 0, progress: 0 });
   const perStringLastRef = useRef<number[]>(Array(6).fill(0));
   const lastHandStringRef = useRef(-1);
   const hoverNoteRef = useRef<{ idx: number; since: number; committed: number }>({ idx: -1, since: 0, committed: -1 });
@@ -134,19 +136,20 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         const cy = sumMotion > 0 ? (sumY / sumMotion) / h : 0.5;
         const now = performance.now();
 
-        if (mag > 0.005) {
+        if (mag > MOTION_GATE) {
           if (cy < NOTE_ZONE_TOP) {
-            // Point-to-pick a chord: map X across the chord chips.
+            // Point-and-hold to pick a chord: map X across the chord chips.
             const len = scaleLenRef.current;
             const idx = Math.max(0, Math.min(len - 1, Math.round(cx * (len - 1))));
             const hv = hoverNoteRef.current;
             if (idx !== hv.idx) { hv.idx = idx; hv.since = now; }
-            else if (now - hv.since > NOTE_SELECT_DWELL && hv.committed !== idx) {
+            const progress = Math.min(1, (now - hv.since) / NOTE_SELECT_DWELL);
+            if (progress >= 1 && hv.committed !== idx) {
               hv.committed = idx;
               selectChordRef.current(idx);
             }
             lastHandStringRef.current = -1;
-            activityRef.current = { x: cx, y: cy, mode: 'note', string: -1, mag, t: now };
+            activityRef.current = { x: cx, y: cy, mode: 'note', string: -1, mag, t: now, progress };
           } else {
             // Strum zone: pluck the string the hand is over.
             hoverNoteRef.current.idx = -1; hoverNoteRef.current.committed = -1;
@@ -157,7 +160,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
               pluckRef.current(s);
             }
             lastHandStringRef.current = s;
-            activityRef.current = { x: cx, y: cy, mode: 'strum', string: s, mag, t: now };
+            activityRef.current = { x: cx, y: cy, mode: 'strum', string: s, mag, t: now, progress: 0 };
           }
         } else {
           lastHandStringRef.current = -1;
@@ -198,8 +201,8 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     const interval = window.setInterval(() => {
       const a = activityRef.current;
       const fresh = performance.now() - a.t < 320;
-      if (fresh && a.mode) { setHandInFrame(true); setPointer({ x: a.x, y: a.y, mode: a.mode }); setHoverNote(a.mode === 'note' ? hoverNoteRef.current.idx : -1); setPlayingString(a.string); }
-      else { setHandInFrame(false); setPointer(null); setHoverNote(-1); setPlayingString(-1); }
+      if (fresh && a.mode) { setHandInFrame(true); setPointer({ x: a.x, y: a.y, mode: a.mode }); setHoverNote(a.mode === 'note' ? hoverNoteRef.current.idx : -1); setHoverProgress(a.mode === 'note' ? a.progress : 0); setPlayingString(a.string); }
+      else { setHandInFrame(false); setPointer(null); setHoverNote(-1); setHoverProgress(0); setPlayingString(-1); }
     }, 100);
     return () => window.clearInterval(interval);
   }, [cameraState]);
@@ -258,7 +261,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         style={{ background: 'radial-gradient(ellipse at 50% 40%, #23110a 0%, #120a06 55%, #060302 100%)' }}
       >
         {/* Camera: shows the full you */}
-        <video ref={videoRef} playsInline muted className={`absolute inset-0 w-full h-full object-cover -scale-x-100 transition-opacity duration-500 ${cameraOn ? 'opacity-90' : 'opacity-0'}`} />
+        <video ref={videoRef} playsInline muted autoPlay className={`absolute inset-0 w-full h-full object-cover -scale-x-100 transition-opacity duration-500 ${cameraOn ? 'opacity-90' : 'opacity-0'}`} />
         <canvas ref={procCanvasRef} width={112} height={84} className="hidden" />
         {/* subtle darken for contrast against overlays */}
         <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(6,3,2,0.55), rgba(6,3,2,0.15) 30%, rgba(6,3,2,0.35))' }} />
@@ -284,17 +287,21 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
               const hovered = i === hoverNote;
               return (
                 <button key={c + i} onClick={() => setChordIndex(i)}
-                  className={`flex-1 py-2.5 rounded-xl font-display font-bold text-base md:text-lg border-2 transition-all active:scale-95 ${
+                  className={`relative overflow-hidden flex-1 py-2.5 rounded-xl font-display font-bold text-base md:text-lg border-2 transition-all active:scale-95 ${
                     selected ? 'bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 border-amber-300 shadow-[0_0_20px_rgba(245,158,11,0.6)] scale-105'
                     : hovered ? 'bg-violet-500/30 text-violet-100 border-violet-400 shadow-[0_0_18px_rgba(167,139,250,0.6)]'
                     : 'bg-black/45 text-amber-200/90 border-amber-900/50 hover:bg-amber-900/40'}`}>
-                  {c}
+                  {/* point-and-hold dwell fill */}
+                  {hovered && !selected && (
+                    <span className="absolute left-0 bottom-0 h-1 bg-violet-300 transition-[width] duration-100" style={{ width: `${hoverProgress * 100}%` }} />
+                  )}
+                  <span className="relative z-10">{c}</span>
                 </button>
               );
             })}
           </div>
           {cameraOn && (
-            <p className="text-center text-[10px] text-violet-300/80 mt-1">Raise your hand & point to a chord to pick it</p>
+            <p className="text-center text-[10px] text-violet-300/80 mt-1">Point &amp; hold on a chord (up here) to pick it</p>
           )}
         </div>
 
