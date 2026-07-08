@@ -193,6 +193,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const currentTimeRef = useRef<number>(0);
   const activeLineIndexRef = useRef<number>(-1);
   const manualScrollHoldUntilRef = useRef(0);
+  const autoFollowResumeRef = useRef<number | null>(null);
   const programmaticScrollUntilRef = useRef(0);
   const autoScrollCurrentRef = useRef<number | null>(null);
   const lineCenterCacheRef = useRef<Map<number, number>>(new Map());
@@ -303,6 +304,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   useEffect(() => {
     activeLineIndexRef.current = activeLineIndex;
   }, [activeLineIndex]);
+
+  useEffect(() => () => {
+    if (autoFollowResumeRef.current) window.clearTimeout(autoFollowResumeRef.current);
+  }, []);
 
   // ─── Parse Song Content ────────────────────────────────────────────
 
@@ -693,10 +698,16 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     const container = scrollContainerRef.current;
     manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
     autoScrollCurrentRef.current = container?.scrollTop ?? null;
-    // Pause auto-follow entirely (any mode) so the user can freely read
-    // ahead/behind while singing. A "Return to current" button resumes it.
+    // Pause auto-follow so the user can freely read ahead/behind while singing.
+    // It auto-resumes after a few idle seconds, and the "Return to current"
+    // button resumes it immediately.
     setAutoFollowPaused(true);
     setShowReturnToCurrent(true);
+    if (autoFollowResumeRef.current) window.clearTimeout(autoFollowResumeRef.current);
+    autoFollowResumeRef.current = window.setTimeout(() => {
+      setAutoFollowPaused(false);
+      setShowReturnToCurrent(false);
+    }, 4000);
   }, []);
 
   const syncClockToManualScroll = useCallback(() => {
@@ -776,9 +787,23 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       }
 
       if (karaokeEnabled && playerReady) {
+        // Karaoke without word/line-timed lyrics: follow the YouTube clock and
+        // drive the active line + auto-scroll from time-based estimates so the
+        // lyrics still scroll in sync with the song.
         const videoTime = getEstimatedPlaybackTimeMs() / 1000;
         const clampedVideoTime = Math.min(actualDuration, Math.max(0, videoTime));
         currentTimeRef.current = clampedVideoTime;
+
+        const newActiveIdx = getActiveLineForTime(clampedVideoTime, timings);
+        if (newActiveIdx >= 0 && newActiveIdx !== activeLineIndexRef.current) {
+          const previousLine = activeLineIndexRef.current;
+          if (previousLine >= 0) lineFillRefs.current[previousLine]?.style.setProperty('--karaoke-fill', '100%');
+          activeLineIndexRef.current = newActiveIdx;
+          setActiveLineIndex(newActiveIdx);
+        }
+        updateKaraokeFill(clampedVideoTime, timings, activeLineIndexRef.current);
+        scrollToProgress(clampedVideoTime, timings, activeLineIndexRef.current);
+
         if (frameTime - lastClockStateSyncRef.current > 250) {
           lastClockStateSyncRef.current = frameTime;
           setCurrentTime(clampedVideoTime);
@@ -1238,6 +1263,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setAutoFollowPaused(false);
     setShowReturnToCurrent(false);
     manualScrollHoldUntilRef.current = 0;
+    if (autoFollowResumeRef.current) { window.clearTimeout(autoFollowResumeRef.current); autoFollowResumeRef.current = null; }
     // Recenter immediately, bypassing scrollToProgress's paused guard (the
     // setState above hasn't flushed yet this tick).
     const timings = getLineTimings();
@@ -1565,6 +1591,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
          {karaokeEnabled && (
            <div
              onPointerDown={handleSplitPointerDown}
+             onPointerMove={handleSplitPointerMove}
+             onPointerUp={handleSplitPointerUp}
              className="flex items-center justify-center h-3 md:h-full md:w-2 cursor-row-resize md:cursor-col-resize order-2 shrink-0 group/divider z-20 bg-white/[0.03] hover:bg-white/[0.08] active:bg-indigo-500/20 transition-colors"
              style={{ touchAction: 'none' }}
            >
@@ -1588,6 +1616,14 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                      <div className="flex gap-1.5">
                          <button onClick={() => { setFallbackLevel(5); setActiveSource(null); setDynamicVideoId(null); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel === 5 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Karaoke source"><Mic2 className="w-3 h-3"/></button>
                          <button onClick={() => { setFallbackLevel(1); setActiveSource(null); setDynamicVideoId(null); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel > 0 && fallbackLevel < 5 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Original source"><Youtube className="w-3 h-3"/></button>
+                         {/* Minimize / expand the video pane (gives lyrics more room) */}
+                         <button
+                           onClick={() => setSplitRatio(r => (r >= 0.78 ? 0.55 : 0.82))}
+                           className="p-1.5 rounded-lg transition-all bg-white/[0.04] text-gray-400 hover:text-white hover:bg-white/[0.08]"
+                           title={splitRatio >= 0.78 ? 'Expand video' : 'Minimize video'}
+                         >
+                           {splitRatio >= 0.78 ? <Plus className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
+                         </button>
                      </div>
                  </div>
 

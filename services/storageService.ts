@@ -41,11 +41,11 @@ Demo arrangement only. Plectrum does not publish copyrighted lyrics.`;
 const BUILTIN_DEMO_SONGS: Song[] = [
     {
         id: 'builtin_channa_mereya_demo',
-        title: 'Channa Mereya',
-        artist: 'Arijit Singh / Fingerstyle Demo',
+        title: 'Bollywood Ballad — Fingerstyle Study',
+        artist: 'Plectrum · Fingerstyle Demo',
         movie: 'Bollywood Fingerstyle Demos',
         collection: 'Bollywood Fingerstyle Demos',
-        status: 'tabs-only',
+        status: 'demo',
         isBuiltIn: true,
         key: 'Am',
         capo: 5,

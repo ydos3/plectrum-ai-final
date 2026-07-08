@@ -36,7 +36,7 @@ const PRESET_PAYPHONE = {
 // Original fingerstyle demo arrangement — no copyrighted lyrics. Am–Em–F–C–G–E.
 // Capo 5 at ~1.4x for the ballad feel.
 const PRESET_CHANNA = {
-    title: "Channa Mereya Fingerstyle",
+    title: "Bollywood Ballad Fingerstyle",
     mode: 'FINGERSTYLE' as InputMode,
     text: "A0-e0-B1-G2-B1-e0-E0-e0-B0-G0-B0-e0-D3-e0-B1-G2-B1-e0-A3-e0-B1-G0-B1-e0-E3-e3-B0-G0-B0-e3-A0-e0-B1-G2-B1-e0-e0-h-e2-B1-s-B3-B3-p-B1-G0-E0/G1/B0/e0-e0-B0-G1-A0/G2/B1/e0-e0-B1-G2-D3/G2/B1/e0-e0-B1-G2-A3/G0/B1/e0-e0-B1-G0-slap-A0-e0",
     pattern: "",
@@ -406,7 +406,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
                        <div className="grid grid-cols-2 gap-2">
                            <button onClick={() => loadPreset(PRESET_CHANNA)} className="p-3 bg-gradient-to-br from-amber-800/50 to-amber-900/30 hover:from-amber-700 hover:to-amber-800 rounded border border-amber-600 text-left col-span-2">
                                <div className="flex items-center justify-between">
-                                   <div className="text-amber-100 font-bold text-sm">Channa Mereya — Fingerstyle</div>
+                                   <div className="text-amber-100 font-bold text-sm">Bollywood Ballad — Fingerstyle</div>
                                    <span className="text-[9px] font-black uppercase tracking-wider text-amber-950 bg-amber-400 rounded px-1.5 py-0.5">Demo</span>
                                </div>
                                <div className="text-[10px] text-amber-300/80">Bollywood Fingerstyle Demos · Capo 5 · 1.4x · original arrangement</div>
