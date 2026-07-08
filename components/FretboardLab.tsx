@@ -6,7 +6,7 @@ import { getChordFingering, getAllChords } from '../services/chordService';
 import { playStrum, playNote, playPercussion, resumeAudio, stopAllAudio } from '../services/audioService';
 import { getSongs } from '../services/storageService';
 import { parseFingerstyleTab } from '../services/tabParser';
-import { Play, Pause, Square, Hand, Zap, RotateCcw, FolderOpen, Plus, Activity, Info, Trash2, ArrowLeft } from 'lucide-react';
+import { Play, Pause, Square, Hand, Zap, RotateCcw, FolderOpen, Plus, Minus, Activity, Info, Trash2, ArrowLeft } from 'lucide-react';
 
 type InputMode = 'CHORDS' | 'FINGERSTYLE';
 
@@ -306,14 +306,27 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
                         <div className="flex justify-between items-center mb-1">
                             <span className="text-[10px] font-bold text-amber-700 uppercase">Sequencer {initialSong && <span className="text-amber-500 truncate max-w-[100px] inline-block align-bottom">- {initialSong.title}</span>}</span>
                             <div className="flex gap-2">
-                                <div className="flex items-center gap-1 md:gap-2 px-2 bg-black/40 rounded border border-[#3e2723]">
+                                <div className="flex items-center gap-1 px-1.5 bg-black/40 rounded border border-[#3e2723]">
                                     <span className="text-[9px] text-amber-600 font-bold">CAPO</span>
-                                    <input 
-                                        type="number" min="0" max="12" 
-                                        value={capoPosition} 
-                                        onChange={(e) => setCapoPosition(parseInt(e.target.value))}
-                                        className="w-6 md:w-8 bg-transparent text-amber-500 text-xs font-bold text-center outline-none" 
-                                    />
+                                    <button
+                                        type="button"
+                                        aria-label="Lower capo"
+                                        onClick={() => setCapoPosition(c => Math.max(0, (Number.isFinite(c) ? c : 0) - 1))}
+                                        className="w-6 h-6 flex items-center justify-center rounded text-amber-400 hover:bg-amber-900/40 active:scale-90 disabled:opacity-30"
+                                        disabled={capoPosition <= 0}
+                                    >
+                                        <Minus className="w-3.5 h-3.5" />
+                                    </button>
+                                    <span className="w-5 text-center text-amber-300 text-sm font-bold tabular-nums">{Number.isFinite(capoPosition) ? capoPosition : 0}</span>
+                                    <button
+                                        type="button"
+                                        aria-label="Raise capo"
+                                        onClick={() => setCapoPosition(c => Math.min(12, (Number.isFinite(c) ? c : 0) + 1))}
+                                        className="w-6 h-6 flex items-center justify-center rounded text-amber-400 hover:bg-amber-900/40 active:scale-90 disabled:opacity-30"
+                                        disabled={capoPosition >= 12}
+                                    >
+                                        <Plus className="w-3.5 h-3.5" />
+                                    </button>
                                 </div>
                                 <div className="flex bg-black/40 rounded p-1">
                                     <button onClick={() => setInputMode('CHORDS')} className={`px-2 md:px-3 py-1 text-[9px] font-bold rounded ${inputMode === 'CHORDS' ? 'bg-amber-700 text-white' : 'text-amber-500'}`}>CHORDS</button>
