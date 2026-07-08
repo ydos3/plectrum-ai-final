@@ -3,6 +3,59 @@ import { AppLanguage, Song } from '../types';
 
 const STORAGE_KEY = 'plectrum_songs_db';
 
+// Original fingerstyle demo arrangement (Plectrum tab notation). NO copyrighted
+// lyrics. Played with Capo 5 at ~1.4x for the ballad feel. Moves through the
+// Am–Em–F–C–G–E progression with arpeggios, a hammer-on, a slide and a slap.
+const CHANNA_FINGERSTYLE_TAB = [
+    // Intro — Am, Em
+    'A0-e0-B1-G2-B1-e0-E0-e0-B0-G0-B0-e0',
+    // Verse — F(maj7), C
+    'D3-e0-B1-G2-B1-e0-A3-e0-B1-G0-B1-e0',
+    // Verse — G, Am
+    'E3-e3-B0-G0-B0-e3-A0-e0-B1-G2-B1-e0',
+    // Lift — hammer-on + slide flourish
+    'e0-h-e2-B1-s-B3-B3-p-B1-G0',
+    // Chorus — E to Am with chord stabs
+    'E0/G1/B0/e0-e0-B0-G1-A0/G2/B1/e0-e0-B1-G2',
+    // Chorus — F to C
+    'D3/G2/B1/e0-e0-B1-G2-A3/G0/B1/e0-e0-B1-G0',
+    // Tag
+    'slap-A0-e0',
+].join('-');
+
+const CHANNA_DEMO_CONTENT = `### [Fingerstyle Demo — Tabs Only]
+An original fingerstyle arrangement for practice.
+Open in Fretboard Lab to play the full tab.
+
+### [How to play]
+Capo 5 · play at ~1.4x speed for the ballad feel.
+
+### [Progression]
+Am   Em   F   C   G   E
+
+### [Note]
+Demo arrangement only. Plectrum does not publish copyrighted lyrics.`;
+
+// Bundled demo songs. These are merged into every user library (by id) so
+// they stay available and fresh across updates without clobbering user edits.
+const BUILTIN_DEMO_SONGS: Song[] = [
+    {
+        id: 'builtin_channa_mereya_demo',
+        title: 'Channa Mereya',
+        artist: 'Arijit Singh / Fingerstyle Demo',
+        movie: 'Bollywood Fingerstyle Demos',
+        collection: 'Bollywood Fingerstyle Demos',
+        status: 'tabs-only',
+        isBuiltIn: true,
+        key: 'Am',
+        capo: 5,
+        language: 'Hindi',
+        fingerstyleTab: CHANNA_FINGERSTYLE_TAB,
+        createdAt: 0,
+        content: CHANNA_DEMO_CONTENT,
+    },
+];
+
 const DEFAULT_SONGS: Song[] = [
     {
         id: 'default_1000_years',
@@ -12,6 +65,7 @@ const DEFAULT_SONGS: Song[] = [
         releaseDate: '2011',
         key: 'Bb',
         capo: 3,
+        status: 'complete',
         strummingPattern: 'D-D-U-U-D-U',
         duration: 285,
         karaokeUrl: 'https://www.youtube.com/watch?v=rtOvBOTyX00',
@@ -112,19 +166,39 @@ const completePerformanceArrangement = (content: string, minimumLines = 24) => {
 
 const normalizeStoredSong = (song: Song): Song => ({
   ...song,
-  content: completePerformanceArrangement(song.content || ''),
+  // Tab-only demos have no lyric arrangement to expand; leave them untouched.
+  content: song.fingerstyleTab
+    ? (song.content || '')
+    : completePerformanceArrangement(song.content || ''),
 });
+
+// Ensure bundled demo songs are present (keyed by id) without clobbering user
+// edits. Built-in demos that the user has not modified are refreshed to the
+// latest bundled version so demo content never goes stale.
+const withBuiltInDemos = (songs: Song[]): Song[] => {
+  const merged = [...songs];
+  BUILTIN_DEMO_SONGS.forEach(demo => {
+    const idx = merged.findIndex(s => s.id === demo.id);
+    if (idx === -1) {
+      merged.push(demo);
+    } else if (merged[idx].isBuiltIn) {
+      // Refresh unmodified built-ins to the latest bundled content.
+      merged[idx] = { ...demo, createdAt: merged[idx].createdAt || demo.createdAt };
+    }
+  });
+  return merged;
+};
 
 export const getSongs = (): Song[] => {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
     if (!data) {
-        // Initialize with default song if library is empty
-        const normalizedDefaults = DEFAULT_SONGS.map(normalizeStoredSong);
+        // Initialize with default + built-in demo songs if library is empty
+        const normalizedDefaults = withBuiltInDemos(DEFAULT_SONGS).map(normalizeStoredSong);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedDefaults));
         return normalizedDefaults;
     }
-    const songs = (JSON.parse(data) as Song[]).map(normalizeStoredSong);
+    const songs = withBuiltInDemos((JSON.parse(data) as Song[])).map(normalizeStoredSong);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(songs));
     return songs;
   } catch (e) {

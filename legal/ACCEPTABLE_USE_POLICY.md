@@ -2,9 +2,9 @@
 
 Effective date: May 17, 2026
 
-Plectrum AI is for educational, personal, and private music practice.
+Plectrum is for educational, personal, and private music practice.
 
-You may not use Plectrum AI to:
+You may not use Plectrum to:
 
 - Infringe copyright or other rights.
 - Bypass paid, authorized, or rights-managed music platforms.

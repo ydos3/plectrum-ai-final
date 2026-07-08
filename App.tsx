@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import Layout from './components/Layout';
 import SongList from './components/SongList';
 import SongEditor from './components/SongEditor';
@@ -9,6 +9,9 @@ import ImageAnalyzer from './components/ImageAnalyzer';
 import ChordTrainer from './components/ChordTrainer';
 import FretboardLab from './components/FretboardLab';
 import PracticeRoom from './components/PracticeRoom';
+// Air Strum bundles a camera + motion loop; lazy-load so it never touches the
+// initial bundle or requests the camera on the homepage.
+const AirStrum = lazy(() => import('./components/AirStrum'));
 import { Song, ViewState, User, AppLanguage, SkillLevel } from './types';
 import { getCurrentUser, login } from './services/authService';
 import { playNextGlobalLoopChord, resumeAudio } from './services/audioService';
@@ -29,7 +32,14 @@ const QUOTES = [
     "Your fingers remember what your mind forgets."
 ];
 
-const APP_STATE_KEY = 'plectrum_app_state_v2';
+// Active navigation state lives in sessionStorage so it survives in-session
+// navigation and refreshes, but is cleared when the app/tab is fully closed.
+// This gives us a clean "fresh launch → home" while still restoring state on
+// refresh. Durable preferences (language, song library) stay in localStorage.
+const SESSION_STATE_KEY = 'plectrum_session_state_v1';
+// Legacy localStorage key that used to force stale deep-route resume on cold
+// launch. We proactively clear it so old installs stop trapping users.
+const LEGACY_APP_STATE_KEY = 'plectrum_app_state_v2';
 
 type PersistedAppState = {
     currentView?: ViewState;
@@ -45,9 +55,9 @@ type AppHistoryState = {
     scannedContent?: string;
 };
 
-const readPersistedAppState = (): PersistedAppState => {
+const readSessionAppState = (): PersistedAppState => {
     try {
-        return JSON.parse(localStorage.getItem(APP_STATE_KEY) || '{}');
+        return JSON.parse(sessionStorage.getItem(SESSION_STATE_KEY) || '{}');
     } catch {
         return {};
     }
@@ -195,25 +205,33 @@ const App: React.FC = () => {
 
         fetchLocation();
 
+        // Clear the legacy localStorage-backed route so old installs never
+        // resume onto a stale deep page after a full close/reopen.
+        try { localStorage.removeItem(LEGACY_APP_STATE_KEY); } catch { /* ignore */ }
+
         // Auth Check
         const user = getCurrentUser();
         if (user) {
-            const persistedState = readPersistedAppState();
+            // sessionStorage is empty on a genuine fresh launch (app fully
+            // closed) → we intentionally land on the home library. On an
+            // in-session refresh it still holds the last active view.
+            const sessionState = readSessionAppState();
+            const isFreshLaunch = !sessionStorage.getItem(SESSION_STATE_KEY);
             const songs = getSongs();
-            const restoredSong = persistedState.selectedSongId
-                ? songs.find(song => String(song.id) === String(persistedState.selectedSongId))
+            const restoredSong = sessionState.selectedSongId
+                ? songs.find(song => String(song.id) === String(sessionState.selectedSongId))
                 : undefined;
-            const restoredView = persistedState.currentView && persistedState.currentView !== 'AUTH'
-                ? persistedState.currentView
+            const restoredView = !isFreshLaunch && sessionState.currentView && sessionState.currentView !== 'AUTH'
+                ? sessionState.currentView
                 : 'LIBRARY';
 
             setCurrentUser(user);
             setSelectedSong(restoredSong);
-            setScannedContent(persistedState.scannedContent);
-            setShowTour(Boolean(persistedState.showTour));
+            setScannedContent(sessionState.scannedContent);
+            setShowTour(!isFreshLaunch && Boolean(sessionState.showTour));
             const safeRestoredView = viewNeedsSong(restoredView) && !restoredSong ? 'LIBRARY' : restoredView;
             setCurrentView(safeRestoredView);
-            writeHistoryState('replace', safeRestoredView, restoredSong, persistedState.scannedContent);
+            writeHistoryState('replace', safeRestoredView, restoredSong, sessionState.scannedContent);
             historyReadyRef.current = true;
         } else {
             setCurrentView('AUTH');
@@ -235,8 +253,8 @@ const App: React.FC = () => {
                 return;
             }
 
-            const persistedState = readPersistedAppState();
-            applyRouteState(persistedState);
+            const sessionState = readSessionAppState();
+            applyRouteState(sessionState);
             writeHistoryState(
                 'replace',
                 currentViewRef.current || 'LIBRARY',
@@ -257,7 +275,9 @@ const App: React.FC = () => {
             scannedContent,
             showTour
         };
-        localStorage.setItem(APP_STATE_KEY, JSON.stringify(stateToPersist));
+        try {
+            sessionStorage.setItem(SESSION_STATE_KEY, JSON.stringify(stateToPersist));
+        } catch { /* storage may be unavailable in private mode */ }
     }, [currentUser, currentView, selectedSong?.id, scannedContent, showTour]);
 
     const handleLanguageChange = (lang: AppLanguage) => {
@@ -346,7 +366,7 @@ const App: React.FC = () => {
                                         </div>
 
                                         <h1 className="font-cursive text-6xl md:text-7xl lg:text-7xl xl:text-8xl text-amber-100 mb-3 drop-shadow-[0_4px_25px_rgba(0,0,0,0.6)] text-center leading-tight">
-                                            Plectrum.ai
+                                            Plectrum
                                         </h1>
 
                                         <p className="flex flex-col items-center gap-1 text-xs md:text-sm text-amber-500 font-bold uppercase tracking-[0.34em] opacity-80 text-center">
@@ -491,6 +511,11 @@ const App: React.FC = () => {
                     {currentView === 'ANALYZER' && <ImageAnalyzer onCreateFromAnalysis={(c) => navigateTo('EDITOR', { scanned: c, clearEditorState: false })} onBack={goBack} />}
                     {currentView === 'CHORD_TRAINER' && <ChordTrainer onBack={goBack} />}
                     {currentView === 'FRETBOARD_LAB' && <FretboardLab initialSong={selectedSong} onBack={goBack} />}
+                    {currentView === 'AIR_STRUM' && (
+                        <Suspense fallback={<div className="h-full w-full flex items-center justify-center text-amber-500/70 text-sm">Loading Air Strum…</div>}>
+                            <AirStrum onBack={goBack} />
+                        </Suspense>
+                    )}
                     {currentView === 'PRACTICE_ROOM' && (
                         <>
                             {selectedSong ? (

@@ -1,5 +1,5 @@
 {
-  "name": "Plectrum.ai",
+  "name": "Plectrum",
   "description": "A private guitar practice studio for song search, chords, teleprompter, tuner, fretboard learning, and studio-style recording.",
   "requestFramePermissions": [
     "camera",

@@ -27,19 +27,31 @@ const PRESET_CHORDS = {
 const PRESET_PAYPHONE = {
     title: "Payphone Fingerstyle",
     mode: 'FINGERSTYLE' as InputMode,
+    // Demo excerpt (riff, not a full arrangement) — labelled honestly below.
     text: "B0-h-B1-s-B3-e5-A5-G0-e3/B3--A5-G0/B3/e3-pulloff-e2-B3-B1- -E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-G0-B1-E0-B0-D2-G2-E0-D2-B0-G2-A5-D4-G2-D4-B0-h-B1-s-B3-e5-A5-G0-e3/B3--A5-G0/B3/e3-pulloff-e2-B3-B1- -E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-G0-B1-E3-D0-G0/B1-E3-D0/G0/B1-pulloff-B0-E3-B0-h-B1-E0-D2-B0-G2-E0-D2-B0-G2-D0---G0-G0-A3-D2-G0-Slap-E0-B3-B3-A3-B0-G2-Slap-E0-G2",
     pattern: "",
     capo: 3
 };
 
+// Original fingerstyle demo arrangement — no copyrighted lyrics. Am–Em–F–C–G–E.
+// Capo 5 at ~1.4x for the ballad feel.
+const PRESET_CHANNA = {
+    title: "Channa Mereya Fingerstyle",
+    mode: 'FINGERSTYLE' as InputMode,
+    text: "A0-e0-B1-G2-B1-e0-E0-e0-B0-G0-B0-e0-D3-e0-B1-G2-B1-e0-A3-e0-B1-G0-B1-e0-E3-e3-B0-G0-B0-e3-A0-e0-B1-G2-B1-e0-e0-h-e2-B1-s-B3-B3-p-B1-G0-E0/G1/B0/e0-e0-B0-G1-A0/G2/B1/e0-e0-B1-G2-D3/G2/B1/e0-e0-B1-G2-A3/G0/B1/e0-e0-B1-G0-slap-A0-e0",
+    pattern: "",
+    capo: 5,
+    speed: 1.4
+};
+
 const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   const [handedness, setHandedness] = useState<Handedness>('Right');
   const [inputMode, setInputMode] = useState<InputMode>('FINGERSTYLE');
-  const [inputText, setInputText] = useState(PRESET_PAYPHONE.text);
-  const [strumPattern, setStrumPattern] = useState(''); 
+  const [inputText, setInputText] = useState(PRESET_CHANNA.text);
+  const [strumPattern, setStrumPattern] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1);
-  const [capoPosition, setCapoPosition] = useState(PRESET_PAYPHONE.capo);
+  const [playbackSpeed, setPlaybackSpeed] = useState(PRESET_CHANNA.speed);
+  const [capoPosition, setCapoPosition] = useState(PRESET_CHANNA.capo);
 
   const [activeNotes, setActiveNotes] = useState<{string: number, fret: number}[]>([]);
   
@@ -56,6 +68,17 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   }, []);
 
   const loadSongIntoLab = (song: Song) => {
+      // Fingerstyle tab songs (e.g. the Channa Mereya demo) load their playable
+      // tab directly so selecting them always shows their tabs.
+      if (song.fingerstyleTab) {
+          setInputMode('FINGERSTYLE');
+          setInputText(song.fingerstyleTab);
+          setStrumPattern('');
+          setCapoPosition(song.capo ?? 0);
+          setPlaybackSpeed(1.4); // ballad feel for the fingerstyle demos
+          setShowLoadModal(false);
+          return;
+      }
       const matches = song.content.match(/\[.*?\]/g);
       if (matches) {
           const chords = matches.map(c => c.replace(/[\[\]]/g, ''));
@@ -72,11 +95,13 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
       setShowLoadModal(false);
   };
 
-  const loadPreset = (preset: typeof PRESET_CHORDS | typeof PRESET_PAYPHONE) => {
+  const loadPreset = (preset: typeof PRESET_CHORDS | typeof PRESET_PAYPHONE | typeof PRESET_CHANNA) => {
       setInputMode(preset.mode);
       setInputText(preset.text);
       setStrumPattern(preset.pattern);
       setCapoPosition(preset.capo);
+      const presetSpeed = (preset as { speed?: number }).speed;
+      setPlaybackSpeed(typeof presetSpeed === 'number' ? presetSpeed : 1);
       setShowLoadModal(false);
   };
 
@@ -84,7 +109,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
       if (initialSong) {
           loadSongIntoLab(initialSong);
       } else {
-          loadPreset(PRESET_PAYPHONE);
+          loadPreset(PRESET_CHANNA);
       }
   }, [initialSong]);
 
@@ -379,13 +404,20 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
                    <div className="p-4 bg-[#2d1b15] border-b border-[#3e2723] space-y-2">
                        <h4 className="text-xs font-bold text-amber-600 uppercase">Quick Presets</h4>
                        <div className="grid grid-cols-2 gap-2">
+                           <button onClick={() => loadPreset(PRESET_CHANNA)} className="p-3 bg-gradient-to-br from-amber-800/50 to-amber-900/30 hover:from-amber-700 hover:to-amber-800 rounded border border-amber-600 text-left col-span-2">
+                               <div className="flex items-center justify-between">
+                                   <div className="text-amber-100 font-bold text-sm">Channa Mereya — Fingerstyle</div>
+                                   <span className="text-[9px] font-black uppercase tracking-wider text-amber-950 bg-amber-400 rounded px-1.5 py-0.5">Demo</span>
+                               </div>
+                               <div className="text-[10px] text-amber-300/80">Bollywood Fingerstyle Demos · Capo 5 · 1.4x · original arrangement</div>
+                           </button>
                            <button onClick={() => loadPreset(PRESET_CHORDS)} className="p-3 bg-amber-900/30 hover:bg-amber-800 rounded border border-amber-800 text-left">
                                <div className="text-amber-200 font-bold text-sm">Chords w/ Strumming</div>
                                <div className="text-[10px] text-amber-500">Masterpiece (Complex Chords)</div>
                            </button>
                            <button onClick={() => loadPreset(PRESET_PAYPHONE)} className="p-3 bg-amber-900/30 hover:bg-amber-800 rounded border border-amber-800 text-left">
-                               <div className="text-amber-200 font-bold text-sm">Payphone Fingerstyle</div>
-                               <div className="text-[10px] text-amber-500">Slides, pull-offs, slaps</div>
+                               <div className="text-amber-200 font-bold text-sm">Payphone Fingerstyle <span className="text-[9px] text-amber-500/70">(demo riff)</span></div>
+                               <div className="text-[10px] text-amber-500">Slides, pull-offs, slaps · excerpt only</div>
                            </button>
                        </div>
                    </div>

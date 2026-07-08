@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:lyrics-sync": "node scripts/test-lyrics-sync.ts",
+    "test:air-strum": "node scripts/test-air-strum.ts",
+    "test": "node scripts/test-lyrics-sync.ts && node scripts/test-air-strum.ts",
     "audit:prod": "npm audit --omit=dev",
     "deploy:vercel": "vercel --prod",
     "validate:song-db": "node scripts/validate-song-db.mjs",

@@ -50,3 +50,6 @@ private-recordings/
 *.sw?
 
 .vercel
+
+# Local Claude Code preview config
+.claude/

@@ -2,7 +2,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { sendChatMessage } from '../services/geminiService';
 import { ChatMessage } from '../types';
-import { Send, Sparkles, Loader2, X } from 'lucide-react';
+import { Send, Sparkles, Loader2, X, Mic, Volume2, VolumeX } from 'lucide-react';
+import { startListening, stopListening, speak, stopSpeaking } from '../services/speechService';
 
 interface AIChatProps {
     onClose?: () => void;
@@ -19,7 +20,10 @@ const AIChat: React.FC<AIChatProps> = ({ onClose }) => {
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [voiceReplies, setVoiceReplies] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const voiceRepliesRef = useRef(false);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -27,13 +31,14 @@ const AIChat: React.FC<AIChatProps> = ({ onClose }) => {
     }
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  const handleSend = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    if (!text || isLoading) return;
 
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
-      text: input,
+      text,
       timestamp: Date.now()
     };
 
@@ -53,12 +58,52 @@ const AIChat: React.FC<AIChatProps> = ({ onClose }) => {
         timestamp: Date.now()
       };
       setMessages(prev => [...prev, botMsg]);
+      // Read Bes's reply aloud when voice replies are enabled.
+      if (voiceRepliesRef.current) speak(responseText, 1.0);
     } catch (error) {
       console.error("Chat error", error);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Voice input: dictate a question, then auto-send it.
+  const handleVoiceInput = () => {
+    if (isListening) {
+      stopListening();
+      setIsListening(false);
+      return;
+    }
+    startListening(
+      'en-US',
+      (transcript) => { setInput(transcript); handleSend(transcript); },
+      () => setIsListening(false),
+      () => setIsListening(true),
+      () => setIsListening(false),
+    );
+  };
+
+  const toggleVoiceReplies = () => {
+    setVoiceReplies(prev => {
+      const next = !prev;
+      voiceRepliesRef.current = next;
+      if (!next) stopSpeaking();
+      return next;
+    });
+  };
+
+  // Auto-start listening when opened via the assistant's voice shortcut,
+  // and always clean up speech resources on unmount.
+  useEffect(() => {
+    let autoListen = false;
+    try {
+      autoListen = sessionStorage.getItem('plectrum_chat_autolisten') === '1';
+      if (autoListen) sessionStorage.removeItem('plectrum_chat_autolisten');
+    } catch { /* ignore */ }
+    if (autoListen) handleVoiceInput();
+    return () => { stopListening(); stopSpeaking(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const renderMessageContent = (text: string, isUser: boolean) => {
     const lines = text.split('\n');
@@ -179,22 +224,50 @@ const AIChat: React.FC<AIChatProps> = ({ onClose }) => {
 
         {/* Input */}
         <div className="p-4 bg-slate-800 border-t border-slate-700">
-          <div className="flex gap-2 relative">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Ask Bes about chords, lyrics, or musical wisdom..."
-              className="flex-1 bg-slate-900 border border-slate-700 text-white pl-4 pr-12 py-3 rounded-xl focus:ring-2 focus:ring-amber-500/50 focus:border-transparent outline-none transition-all placeholder-slate-500"
-            />
-            <button 
-              onClick={handleSend}
-              disabled={isLoading || !input.trim()}
-              className="absolute right-2 top-2 p-1.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors shadow-lg"
+          <div className="flex items-center gap-2">
+            {/* Voice input (dictate a question) */}
+            <button
+              onClick={handleVoiceInput}
+              aria-label={isListening ? 'Stop listening' : 'Ask with your voice'}
+              title={isListening ? 'Listening… tap to stop' : 'Ask with your voice'}
+              className={`shrink-0 p-3 rounded-xl border transition-colors shadow-lg ${
+                isListening
+                  ? 'bg-red-600 border-red-400 text-white animate-pulse'
+                  : 'bg-slate-900 border-slate-700 text-amber-400 hover:text-white hover:bg-slate-700'
+              }`}
             >
-              <Send className="w-5 h-5" />
+              <Mic className="w-5 h-5" />
             </button>
+            {/* Speak replies toggle */}
+            <button
+              onClick={toggleVoiceReplies}
+              aria-label={voiceReplies ? 'Mute spoken replies' : 'Speak replies aloud'}
+              title={voiceReplies ? 'Spoken replies on' : 'Spoken replies off'}
+              className={`shrink-0 p-3 rounded-xl border transition-colors shadow-lg ${
+                voiceReplies
+                  ? 'bg-amber-600 border-amber-400 text-white'
+                  : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700'
+              }`}
+            >
+              {voiceReplies ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+            </button>
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                placeholder={isListening ? 'Listening…' : 'Ask Bes about chords, lyrics, or musical wisdom...'}
+                className="w-full bg-slate-900 border border-slate-700 text-white pl-4 pr-12 py-3 rounded-xl focus:ring-2 focus:ring-amber-500/50 focus:border-transparent outline-none transition-all placeholder-slate-500"
+              />
+              <button
+                onClick={() => handleSend()}
+                disabled={isLoading || !input.trim()}
+                className="absolute right-2 top-2 p-1.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors shadow-lg"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>

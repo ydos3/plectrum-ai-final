@@ -2,7 +2,7 @@
 
 Effective date: May 17, 2026
 
-This policy summarizes expected retention for Plectrum AI.
+This policy summarizes expected retention for Plectrum.
 
 - Browser app state, saved songs, settings, and generated practice content may remain in `localStorage` until deleted by the user or browser.
 - Private practice recordings may remain in IndexedDB until deleted by the user or browser.

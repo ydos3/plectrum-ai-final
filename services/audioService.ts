@@ -6,9 +6,28 @@ let masterCompressor: DynamicsCompressorNode | null = null;
 let masterGain: GainNode | null = null;
 let masterLimiter: WaveShaperNode | null = null;
 let outputCeiling: GainNode | null = null;
+let reverbConvolver: ConvolverNode | null = null;
+let reverbWet: GainNode | null = null;
+let resonanceAmount = 0.25; // 0..1, controllable via setResonance()
 const MASTER_OUTPUT_GAIN = 1.18;
 const OUTPUT_CEILING_GAIN = 0.92;
 const MAX_ACTIVE_VOICES = 36;
+const MAX_REVERB_WET = 0.9;
+
+// Generate a short, warm plate-style impulse response for the reverb send.
+const buildImpulseResponse = (ctx: AudioContext, seconds = 2.4, decay = 3.2) => {
+  const rate = ctx.sampleRate;
+  const length = Math.max(1, Math.floor(rate * seconds));
+  const impulse = ctx.createBuffer(2, length, rate);
+  for (let ch = 0; ch < 2; ch++) {
+    const data = impulse.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      // Decaying noise → smooth diffuse tail.
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+    }
+  }
+  return impulse;
+};
 
 type Voice = {
   sources: AudioScheduledSourceNode[];
@@ -100,9 +119,34 @@ const initAudio = () => {
     masterCompressor.connect(masterLimiter);
     masterLimiter.connect(outputCeiling);
     outputCeiling.connect(audioCtx.destination);
+
+    // Parallel reverb send for resonance/sustain. Additive and defensive — if
+    // anything fails the dry signal above keeps working untouched.
+    try {
+      reverbConvolver = audioCtx.createConvolver();
+      reverbConvolver.buffer = buildImpulseResponse(audioCtx);
+      reverbWet = audioCtx.createGain();
+      reverbWet.gain.value = resonanceAmount * MAX_REVERB_WET;
+      masterGain.connect(reverbConvolver);
+      reverbConvolver.connect(reverbWet);
+      reverbWet.connect(outputCeiling);
+    } catch {
+      reverbConvolver = null;
+      reverbWet = null;
+    }
   }
   return { ctx: audioCtx, output: masterGain! };
 };
+
+// Set the resonance (reverb tail) amount, 0 (dry) .. 1 (lush).
+export const setResonance = (amount: number) => {
+  resonanceAmount = Math.min(1, Math.max(0, amount));
+  if (reverbWet && audioCtx) {
+    reverbWet.gain.setTargetAtTime(resonanceAmount * MAX_REVERB_WET, audioCtx.currentTime, 0.05);
+  }
+};
+
+export const getResonance = () => resonanceAmount;
 
 export const resumeAudio = () => {
     // Mobile browsers (especially iOS) require user interaction to resume/unlock AudioContext

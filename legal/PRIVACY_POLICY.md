@@ -2,15 +2,15 @@
 
 Effective date: May 17, 2026
 
-This Privacy Policy explains how Plectrum AI may process information when you use Plectrum AI.
+This Privacy Policy explains how Plectrum may process information when you use Plectrum.
 
-## What Plectrum AI Is
+## What Plectrum Is
 
-Plectrum AI is an AI-assisted guitar/music practice companion for educational, personal, and private practice use.
+Plectrum is an AI-assisted guitar/music practice companion for educational, personal, and private practice use.
 
 ## Data We May Process
 
-Depending on how you use the app, Plectrum AI may process profile information, app preferences, saved songs, practice content, AI prompts and outputs, device/browser information, logs, recordings created in the Practice Room, and information needed to operate embedded third-party content.
+Depending on how you use the app, Plectrum may process profile information, app preferences, saved songs, practice content, AI prompts and outputs, device/browser information, logs, recordings created in the Practice Room, and information needed to operate embedded third-party content.
 
 The app may use browser `localStorage` for saved app state, songs, language choices, and generated practice content. It may use IndexedDB for private practice recordings. These browser stores remain on your device unless you clear them or the app later adds account sync.
 
@@ -24,7 +24,7 @@ Some features may send prompts, song requests, images, or generated content to A
 
 ## Third-Party Services
 
-Plectrum AI may interact with services such as YouTube embeds, LRCLIB, Gemini/Google, Supabase, Vercel, Razorpay, analytics providers, or similar infrastructure providers, depending on deployment and enabled features. These services may process data under their own terms and privacy policies.
+Plectrum may interact with services such as YouTube embeds, LRCLIB, Gemini/Google, Supabase, Vercel, Razorpay, analytics providers, or similar infrastructure providers, depending on deployment and enabled features. These services may process data under their own terms and privacy policies.
 
 ## IP, Location, Analytics, and Cookies
 
@@ -40,7 +40,7 @@ To request access, correction, deletion, or export of personal data, contact ple
 
 ## Children
 
-Plectrum AI is not intended to knowingly collect personal information from children under 13 without appropriate parental consent.
+Plectrum is not intended to knowingly collect personal information from children under 13 without appropriate parental consent.
 
 ## Contact
 

@@ -13,6 +13,16 @@ export interface User {
   isAdmin?: boolean;
 }
 
+// Honest completeness labelling so incomplete/demo content is never presented
+// as a polished, complete song.
+export type SongStatus =
+  | 'complete'
+  | 'demo'
+  | 'incomplete'
+  | 'tabs-only'
+  | 'lyrics-only'
+  | 'needs-sync';
+
 export interface Song {
   id: string;
   title: string;
@@ -24,6 +34,14 @@ export interface Song {
   recommendedKey?: string;
   capo?: number;
   strummingPattern?: string;
+  /** Playable fingerstyle tab in Plectrum tab notation (see services/tabParser.ts). */
+  fingerstyleTab?: string;
+  /** Album/collection this song belongs to, e.g. "Bollywood Fingerstyle Demos". */
+  collection?: string;
+  /** Honest completeness status; drives library labelling. */
+  status?: SongStatus;
+  /** True for bundled demo content so we can keep it fresh across app updates. */
+  isBuiltIn?: boolean;
   difficulty?: 'Beginner' | 'Intermediate' | 'Advanced' | string;
   practiceTips?: string[];
   chordSimplifications?: { from: string; to: string; reason?: string }[];
@@ -45,7 +63,7 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-export type ViewState = 'AUTH' | 'SUBSCRIPTION' | 'ONBOARDING' | 'LIBRARY' | 'EDITOR' | 'TELEPROMPTER' | 'CHAT' | 'ANALYZER' | 'CHORD_TRAINER' | 'FRETBOARD_LAB' | 'PRACTICE_ROOM';
+export type ViewState = 'AUTH' | 'SUBSCRIPTION' | 'ONBOARDING' | 'LIBRARY' | 'EDITOR' | 'TELEPROMPTER' | 'CHAT' | 'ANALYZER' | 'CHORD_TRAINER' | 'FRETBOARD_LAB' | 'PRACTICE_ROOM' | 'AIR_STRUM';
 
 export interface ViewProps {
   changeView: (view: ViewState, data?: any) => void;

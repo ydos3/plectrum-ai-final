@@ -632,11 +632,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   }, []);
 
   const scrollToProgress = useCallback((time: number, timings?: number[], activeIdx?: number, immediate = false) => {
+    // Manual scrolling pauses auto-follow entirely (any mode) so we never fight
+    // the user when they read ahead. The short hold is a secondary guard.
+    if (autoFollowPaused) return;
     if (Date.now() < manualScrollHoldUntilRef.current) return;
-    if (isSyncedLyricsMode && autoFollowPaused) return;
     const target = getAutoScrollTarget(time, timings, activeIdx);
     if (target !== null) easeScrollTo(target, immediate);
-  }, [autoFollowPaused, easeScrollTo, getAutoScrollTarget, isSyncedLyricsMode]);
+  }, [autoFollowPaused, easeScrollTo, getAutoScrollTarget]);
 
   const updateKaraokeFill = useCallback((time: number, timings: number[], activeIdx: number, syncedCues?: SyncedLineCue[]) => {
     if (!karaokeEnabled || activeIdx < 0) return;
@@ -691,11 +693,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     const container = scrollContainerRef.current;
     manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
     autoScrollCurrentRef.current = container?.scrollTop ?? null;
-    if (isSyncedLyricsMode) {
-      setAutoFollowPaused(true);
-      setShowReturnToCurrent(true);
-    }
-  }, [isSyncedLyricsMode]);
+    // Pause auto-follow entirely (any mode) so the user can freely read
+    // ahead/behind while singing. A "Return to current" button resumes it.
+    setAutoFollowPaused(true);
+    setShowReturnToCurrent(true);
+  }, []);
 
   const syncClockToManualScroll = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -1236,11 +1238,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setAutoFollowPaused(false);
     setShowReturnToCurrent(false);
     manualScrollHoldUntilRef.current = 0;
+    // Recenter immediately, bypassing scrollToProgress's paused guard (the
+    // setState above hasn't flushed yet this tick).
     const timings = getLineTimings();
     const currentIdx = activeLineIndexRef.current;
-    if (currentIdx >= 0) {
-      scrollToProgress(currentTimeRef.current, timings, currentIdx, true);
-    }
+    const target = getAutoScrollTarget(currentTimeRef.current, timings, currentIdx);
+    if (target !== null) easeScrollTo(target, true);
   };
 
   const renderStructuredContent = () => {
@@ -1693,12 +1696,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
          )}
       </div>
 
-      {showReturnToCurrent && isSyncedLyricsMode && (
+      {showReturnToCurrent && (
         <button
           onClick={returnToCurrentLyric}
-          className="absolute left-1/2 bottom-24 md:bottom-28 -translate-x-1/2 z-50 px-4 py-2.5 bg-indigo-500/90 hover:bg-indigo-400 text-white rounded-full text-xs font-bold uppercase tracking-wider shadow-2xl border border-white/10 backdrop-blur-lg transition-all"
+          className="absolute left-1/2 bottom-24 md:bottom-28 -translate-x-1/2 z-50 px-4 py-2.5 bg-indigo-500/90 hover:bg-indigo-400 text-white rounded-full text-xs font-bold uppercase tracking-wider shadow-2xl border border-white/10 backdrop-blur-lg transition-all flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2"
         >
-          Return to current lyric
+          <ArrowRight className="w-3.5 h-3.5 rotate-90" />
+          {isSyncedLyricsMode ? 'Return to current lyric' : 'Resume auto-scroll'}
         </button>
       )}
 

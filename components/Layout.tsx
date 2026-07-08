@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Image as ImageIcon, PlusCircle, Search, Menu, X, BookOpen, LogOut, User as UserIcon, Guitar, Globe, Video, HelpCircle, ChevronRight, MessageCircle, Sparkles } from 'lucide-react';
+import { MessageSquare, Image as ImageIcon, PlusCircle, Search, Menu, X, BookOpen, LogOut, User as UserIcon, Guitar, Globe, Video, HelpCircle, ChevronRight, Sparkles, Hand } from 'lucide-react';
 import { ViewState, User, AppLanguage } from '../types';
 import { playLogoChord, playNavChord } from '../services/audioService';
 import { logout } from '../services/authService';
 import PlectrumLogo from './PlectrumLogo';
+import FloatingAssistant from './FloatingAssistant';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -40,7 +41,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
 
   const TOUR_STEPS: TourStep[] = [
     {
-      title: "Yo, Welcome to Plectrum.ai",
+      title: "Yo, Welcome to Plectrum",
       text: "I'm Bes, your AI roadie and luthier. I'm here to help you cook up some hits. Let's take a quick spin around the studio.",
       position: 'center'
     },
@@ -176,7 +177,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             </div>
             {/* Logo Text */}
             <h1 className="font-cursive text-5xl text-amber-100 tracking-wide text-shadow-lg px-2">
-              Plectrum.ai
+              Plectrum
             </h1>
           </div>
 
@@ -197,6 +198,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
               </h3>
               <NavItem id="nav-practice" view="PRACTICE_ROOM" icon={Video} label="Practice Room" soundIndex={3} />
               <NavItem id="nav-fretboard" view="FRETBOARD_LAB" icon={Guitar} label="Fretboard Lab" soundIndex={2} />
+              <NavItem id="nav-airstrum" view="AIR_STRUM" icon={Hand} label="Air Strum" soundIndex={2} />
               <NavItem view="CHORD_TRAINER" icon={BookOpen} label="Chord Quiz" soundIndex={3} />
               <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
               <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />
@@ -259,7 +261,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
         <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#3e2723] border-b border-[#5d4037] flex items-center justify-between px-4 z-50 shadow-lg">
           <div className="flex items-center gap-2 text-amber-500 overflow-visible px-2" onClick={handleLogoClick}>
             <PlectrumLogo className="w-8 h-8" />
-            <span className="font-cursive text-3xl text-amber-100 pb-1 px-1">Plectrum.ai</span>
+            <span className="font-cursive text-3xl text-amber-100 pb-1 px-1">Plectrum</span>
           </div>
           <button onClick={(e) => { e.stopPropagation(); setIsMobileMenuOpen(true); }} className="text-amber-400 p-2">
             <Menu className="w-6 h-6" />
@@ -294,6 +296,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             <NavItem view="EDITOR" icon={PlusCircle} label="Composer" soundIndex={1} />
             <NavItem view="PRACTICE_ROOM" icon={Video} label="Practice Room" soundIndex={3} />
             <NavItem view="FRETBOARD_LAB" icon={Guitar} label="Fretboard Lab" soundIndex={2} />
+            <NavItem view="AIR_STRUM" icon={Hand} label="Air Strum" soundIndex={2} />
             <NavItem view="CHORD_TRAINER" icon={BookOpen} label="Chord Quiz" soundIndex={3} />
             <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
             <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />
@@ -319,16 +322,16 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
         {children}
       </main>
 
-      {/* Floating Chat Button - Hidden in Fretboard Lab and Practice Room */}
-      {currentView !== 'CHAT' && currentView !== 'FRETBOARD_LAB' && currentView !== 'PRACTICE_ROOM' && !showTour && (
-        <button
-          onClick={() => changeView('CHAT')}
-          className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 rounded-full shadow-[0_0_20px_rgba(79,70,229,0.5)] flex items-center justify-center z-40 transition-all hover:scale-110 group border-2 border-indigo-400"
-          title="Ask Bes Live"
-        >
-          <MessageCircle className="w-8 h-8 text-white group-hover:rotate-12 transition-transform" />
-          <span className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 rounded-full animate-pulse border-2 border-black"></span>
-        </button>
+      {/* Floating Assistant - draggable, translucent, logo icon + voice.
+          Hidden in Fretboard Lab, Practice Room and Air Strum. */}
+      {currentView !== 'CHAT' && currentView !== 'FRETBOARD_LAB' && currentView !== 'PRACTICE_ROOM' && currentView !== 'AIR_STRUM' && !showTour && (
+        <FloatingAssistant
+          onOpen={() => changeView('CHAT')}
+          onVoice={() => {
+            try { sessionStorage.setItem('plectrum_chat_autolisten', '1'); } catch { /* ignore */ }
+            changeView('CHAT');
+          }}
+        />
       )}
 
       {/* Tour Guide - Bottom Right Cloud */}
