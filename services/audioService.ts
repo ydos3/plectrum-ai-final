@@ -10,9 +10,9 @@ let masterMixBus: GainNode | null = null;
 let reverbConvolver: ConvolverNode | null = null;
 let reverbWet: GainNode | null = null;
 let resonanceAmount = 0.16; // 0..1, controllable via setResonance()
-// Lowered from 1.18 → 1.0: combined with the reverb send it was pushing the
-// mix past 0 dBFS and cracking (hard clipping) during fast fingerstyle runs.
-const MASTER_OUTPUT_GAIN = 1.0;
+// The mix bus now runs through a 4x-oversampled soft limiter, so we can push
+// perceived loudness up without the earlier cracking/clipping.
+const MASTER_OUTPUT_GAIN = 1.4;
 const OUTPUT_CEILING_GAIN = 0.92;
 const MAX_ACTIVE_VOICES = 28;
 const MAX_REVERB_WET = 0.6;
@@ -239,7 +239,7 @@ const scheduleNote = (
   const isPull = type === 'pull' || type === 'pull-off';
   const isSlide = type === 'slide';
   const isLegato = isHammer || isPull || isSlide;
-  const baseAmplitude = (isBassString ? 0.31 : 0.26) * (isHammer ? 0.72 : isPull ? 0.62 : isSlide ? 0.78 : 1);
+  const baseAmplitude = (isBassString ? 0.4 : 0.36) * (isHammer ? 0.72 : isPull ? 0.62 : isSlide ? 0.78 : 1);
   const attackTime = isSlide ? 0.012 : isHammer ? 0.024 : isPull ? 0.014 : 0.006;
   const decayDuration = (isBassString ? 1.55 : 1.25) * (isLegato ? 0.86 : 1);
 

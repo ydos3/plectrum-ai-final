@@ -3,6 +3,7 @@ import { ArrowLeft, Camera, CameraOff, Hand, Sparkles, ShieldCheck, ArrowDown, A
 import { getChordFingering } from '../services/chordService';
 import { playStrum, playNote, resumeAudio, stopAllAudio, setResonance, getResonance } from '../services/audioService';
 import { ParticleField } from '../services/particleField';
+import { stringIndexFromX, chordIndexFromX } from '../services/airStrumDetector';
 
 interface AirStrumProps {
   onBack?: () => void;
@@ -24,7 +25,7 @@ const SCALE_PRESETS: ScalePreset[] = [
 const STRING_LABELS = ['E', 'A', 'D', 'G', 'B', 'e'];
 const STRINGS_LEFT = 0.10;
 const STRINGS_SPAN = 0.80;
-const NOTE_ZONE_TOP = 0.36;    // upper portion of the stage = "point to pick a chord"
+const NOTE_ZONE_TOP = 0.42;    // upper portion of the stage = "point to pick a chord"
 const NOTE_SELECT_DWELL = 200; // ms of pointing before a chord commits
 const MOTION_GATE = 0.004;     // low so gentle hand movement still registers
 const HAND_PERSIST_MS = 650;   // treat the hand as still-present briefly after motion stops
@@ -151,7 +152,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
           if (ey < NOTE_ZONE_TOP) {
             // Point-and-hold to pick a chord: map X across the chord chips.
             const len = scaleLenRef.current;
-            const idx = Math.max(0, Math.min(len - 1, Math.round(ex * (len - 1))));
+            const idx = chordIndexFromX(ex, len);
             const hv = hoverNoteRef.current;
             if (idx !== hv.idx) { hv.idx = idx; hv.since = now; }
             const progress = Math.min(1, (now - hv.since) / NOTE_SELECT_DWELL);
@@ -163,13 +164,13 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
             activityRef.current = { x: ex, y: ey, mode: 'note', string: -1, mag, t: now, progress };
           } else {
             // Strum zone: pluck ONLY the string the hand is over — and only on
-            // real motion, so a resting hand doesn't machine-gun a string.
+            // real motion, so a resting hand doesn't machine-gun a string. Edge
+            // clamping keeps the outer strings (low E / high e) reachable.
             hoverNoteRef.current.idx = -1; hoverNoteRef.current.committed = -1;
             let s = -1;
             if (seen) {
-              const frac = (ex - STRINGS_LEFT) / STRINGS_SPAN;
-              s = Math.max(0, Math.min(5, Math.round(frac * 5)));
-              if (s !== lastHandStringRef.current && now - perStringLastRef.current[s] > 90) {
+              s = stringIndexFromX(ex, STRINGS_LEFT, STRINGS_SPAN, 6);
+              if (s !== lastHandStringRef.current && now - perStringLastRef.current[s] > 55) {
                 perStringLastRef.current[s] = now;
                 pluckRef.current(s);
               }
@@ -374,21 +375,14 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         )}
 
         {cameraOn && !handInFrame && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 bg-black/55 text-amber-200 text-[11px] px-4 py-2 rounded-full border border-amber-900/40 pointer-events-none text-center backdrop-blur-sm">
+          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 bg-black/55 text-amber-200 text-[11px] px-4 py-2 rounded-full border border-amber-900/40 pointer-events-none text-center backdrop-blur-sm">
             Point &amp; hold a chord up top · move your hand across the strings below to play
           </div>
         )}
-      </div>
 
-      {/* Bottom strum controls */}
-      <div className="relative z-30 shrink-0 pb-safe pt-2">
-        <div className="flex items-center justify-center gap-3 md:gap-4 px-3">
-          <button onClick={() => strum('D')} className="flex items-center gap-2 px-6 md:px-8 py-3 rounded-xl bg-[#241611] border border-amber-900/60 hover:border-amber-500 text-amber-100 font-bold shadow-lg active:scale-95 transition-all"><ArrowDown className="w-5 h-5 text-amber-400" /> Strum Down</button>
-          <button onClick={() => strum('U')} className="flex items-center gap-2 px-6 md:px-8 py-3 rounded-xl bg-[#241611] border border-amber-900/60 hover:border-amber-500 text-amber-100 font-bold shadow-lg active:scale-95 transition-all"><ArrowUp className="w-5 h-5 text-amber-400" /> Strum Up</button>
-        </div>
-        <div className="flex flex-col items-center gap-0.5 py-2 text-center">
-          <p className="flex items-center gap-1.5 text-[10px] text-emerald-400/80"><ShieldCheck className="w-3 h-3" /> Camera stays on your device. No video uploaded.</p>
-          <p className="flex items-center gap-1.5 text-[10px] text-amber-600/70"><Hand className="w-3 h-3" /> Point &amp; hold to pick a chord · move across the strings to play · or tap</p>
+        {/* Privacy note (kept, small) — camera never leaves the device */}
+        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 text-[10px] text-emerald-400/80 pointer-events-none">
+          <ShieldCheck className="w-3 h-3" /> Camera stays on your device. No video uploaded.
         </div>
       </div>
     </div>

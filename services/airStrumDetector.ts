@@ -8,6 +8,22 @@
 
 export type StrumDirection = 'down' | 'up';
 
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/**
+ * Map a normalized horizontal hand position to a string index. The x is clamped
+ * a touch inside the string band first so the outer strings (low E and high e)
+ * are comfortably reachable even when the hand doesn't quite reach the frame edge.
+ */
+export const stringIndexFromX = (cx: number, left = 0.10, span = 0.80, count = 6): number => {
+  const frac = (clamp(cx, left - 0.02, left + span + 0.02) - left) / span;
+  return clamp(Math.round(frac * (count - 1)), 0, count - 1);
+};
+
+/** Map a normalized horizontal hand position to a chord chip index (0..count-1). */
+export const chordIndexFromX = (cx: number, count: number): number =>
+  clamp(Math.round(clamp(cx, 0, 1) * (count - 1)), 0, count - 1);
+
 export interface MotionSample {
   /** Horizontal centroid of motion, normalized 0 (left) .. 1 (right). */
   centroidX: number;

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Song, Handedness } from '../types';
-import { Play, Pause, X, Layout, Search, ExternalLink, ArrowRight, AlertCircle, Youtube, Minus, Plus, Loader2, RefreshCw, Mic2, ArrowLeft, Timer } from 'lucide-react';
+import { Play, Pause, X, Search, ExternalLink, ArrowRight, AlertCircle, Youtube, Minus, Plus, Loader2, RefreshCw, Mic2, Mic, Maximize2, Minimize2, ArrowLeft, Timer } from 'lucide-react';
 import { getChordFingering } from '../services/chordService';
 import { getYouTubeVideoId } from '../services/geminiService';
 import { extractYouTubeVideoId, getYouTubeSearchUrl, searchYouTubeSource, toYouTubeWatchUrl, YouTubeSource, YouTubeSourceType } from '../services/youtubeService';
@@ -177,6 +177,7 @@ const getInitialDuration = (song: Song) => (
 const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const persistedState = useRef<PersistedTeleprompterState>(readTeleprompterState());
   const [karaokeEnabled, setKaraokeEnabled] = useState(() => Boolean(persistedState.current.karaokeEnabled));
+  const [videoExpanded, setVideoExpanded] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(() => clampNumber(persistedState.current.playbackSpeed, 1, MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED));
   const [youtubePlaybackRate, setYoutubePlaybackRate] = useState(() => clampNumber(persistedState.current.youtubePlaybackRate, 1, 0.25, MAX_PLAYBACK_SPEED));
   
@@ -699,23 +700,16 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   // last wheel/touch/pointer-drag so the teleprompter doesn't fight
   // the user. The clock and active-line highlight still update so
   // karaoke playback keeps running.
-  const MANUAL_SCROLL_HOLD_MS = 3000;
+  // Manual scrolling is always allowed WHILE auto-scrolling: any wheel/touch/drag
+  // just holds the auto-follow briefly, then it smoothly resumes on its own (no
+  // explicit pause, no button). This lets the user glance ahead mid-song.
+  const MANUAL_SCROLL_HOLD_MS = 1800;
 
   const holdAutoScrollForManualInput = useCallback(() => {
     if (Date.now() < programmaticScrollUntilRef.current) return;
     const container = scrollContainerRef.current;
     manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
     autoScrollCurrentRef.current = container?.scrollTop ?? null;
-    // Pause auto-follow so the user can freely read ahead/behind while singing.
-    // It auto-resumes after a few idle seconds, and the "Return to current"
-    // button resumes it immediately.
-    setAutoFollowPaused(true);
-    setShowReturnToCurrent(true);
-    if (autoFollowResumeRef.current) window.clearTimeout(autoFollowResumeRef.current);
-    autoFollowResumeRef.current = window.setTimeout(() => {
-      setAutoFollowPaused(false);
-      setShowReturnToCurrent(false);
-    }, 4000);
   }, []);
 
   const syncClockToManualScroll = useCallback(() => {
@@ -758,18 +752,33 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       const deltaTime = Math.min(Math.max(0, (frameTime - lastFrameTime) / 1000), 0.1);
       lastFrameTime = frameTime;
 
-      // ── Smooth, Spotify-style teleprompter scroll (all modes) ───────────────
-      // The backing video (if any) is just the audio. Lyrics scroll at a smooth,
-      // constant, user-controlled rate — the +/- control sets the SCROLL speed,
-      // never the video's playback rate. Manual scrolling peeks without breaking
-      // the flow and auto-resumes.
       const container = scrollContainerRef.current;
       if (!container) { scrollTimerRef.current = requestAnimationFrame(scrollLoop); return; }
       const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
-      const paused = autoFollowPausedRef.current || Date.now() < manualScrollHoldUntilRef.current;
+      const paused = Date.now() < manualScrollHoldUntilRef.current;
+
+      if (!paused && karaokeEnabled && playerReady) {
+        // ── KARAOKE: lyrics SYNC to the YouTube video clock ───────────────────
+        // The video is the master; lyrics track its position. The +/- speed
+        // fine-tunes the lyric pacing (teleprompter only — the video stays 1x).
+        const videoTimeSec = getEstimatedPlaybackTimeMs() / 1000;
+        const effTime = videoTimeSec * playbackSpeed;
+        const timings = getLineTimings();
+        const activeIdx = getActiveLineForTime(effTime, timings);
+        if (activeIdx >= 0 && activeIdx !== activeLineIndexRef.current) {
+          activeLineIndexRef.current = activeIdx;
+          setActiveLineIndex(activeIdx);
+        }
+        // Smoothly ease the scroll toward the current line (respects manual hold).
+        scrollToProgress(effTime, timings, activeIdx >= 0 ? activeIdx : undefined);
+        currentTimeRef.current = effTime;
+        scrollTimerRef.current = requestAnimationFrame(scrollLoop);
+        return;
+      }
 
       if (!paused) {
-        const pxPerSec = fontSizeRef.current * 3 * playbackSpeed; // readable pace, speed-scaled
+        // ── PURE teleprompter (no video): constant px/sec, speed-controlled ────
+        const pxPerSec = fontSizeRef.current * 3 * playbackSpeed;
         const base = autoScrollCurrentRef.current ?? container.scrollTop;
         const next = Math.min(maxScroll, base + pxPerSec * deltaTime);
         programmaticScrollUntilRef.current = Date.now() + 160;
@@ -792,12 +801,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
           setActiveLineIndex(bestIdx);
         }
 
-        if (next >= maxScroll - 0.5) {
-          // Reached the end — stop scrolling and pause the backing video too.
-          if (karaokeEnabled && playerReady) { try { playerRef.current?.pauseVideo?.(); } catch { /* ignore */ } }
-          setIsPlaying(false);
-          return;
-        }
+        if (next >= maxScroll - 0.5) { setIsPlaying(false); return; }
       }
 
       currentTimeRef.current += deltaTime * playbackSpeed;
@@ -809,7 +813,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
     };
-  }, [isPlaying, playbackSpeed, karaokeEnabled, playerReady]);
+  }, [isPlaying, playbackSpeed, karaokeEnabled, playerReady, getEstimatedPlaybackTimeMs, getLineTimings, getActiveLineForTime, scrollToProgress]);
 
   // (Removed the "sync-while-paused" loop: it followed YouTube time and kept
   // scrolling the lyrics while paused. Pausing now cleanly stops the scroll.)
@@ -1435,15 +1439,16 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         </div>
         
         <div className="flex items-center gap-2 shrink-0">
-             <button 
+             <button
                 onClick={() => setKaraokeEnabled(!karaokeEnabled)}
+                title={karaokeEnabled ? 'Hide karaoke video' : 'Karaoke (with video)'}
                 className={`px-3 py-2 md:px-4 md:py-2.5 rounded-xl text-[10px] md:text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all border backdrop-blur-lg ${
                   karaokeEnabled
                     ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 shadow-[0_0_20px_rgba(99,102,241,0.15)]'
                     : 'text-gray-400 bg-white/[0.04] border-white/[0.06] hover:bg-white/[0.08]'
                 }`}
              >
-                <Layout className="w-4 h-4" /> <span className="hidden md:inline">{karaokeEnabled ? 'Exit Split' : 'Karaoke'}</span>
+                <Mic className="w-4 h-4" /> <span className="hidden md:inline">Karaoke</span>
              </button>
              <button onClick={onClose} className="p-2.5 bg-white/[0.04] hover:bg-white/[0.08] text-white rounded-xl transition-all border border-white/[0.06]">
                 <X className="w-5 h-5" />
@@ -1451,20 +1456,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         </div>
       </div>
 
-      <div
-        ref={splitContainerRef}
-        onPointerMove={karaokeEnabled ? handleSplitPointerMove : undefined}
-        onPointerUp={karaokeEnabled ? handleSplitPointerUp : undefined}
-        className={`flex-1 min-h-0 overflow-hidden relative flex ${karaokeEnabled ? 'flex-col md:flex-row' : ''}`}
-        style={karaokeEnabled ? { userSelect: isDraggingSplitRef.current ? 'none' : undefined } as React.CSSProperties : undefined}
-      >
-         <div
-           className={`min-h-0 relative ${karaokeEnabled ? 'teleprompter-lyrics-pane border-t md:border-t-0 md:border-r border-white/[0.05] order-3 md:order-1' : 'w-full h-full'}`}
-           style={karaokeEnabled ? {
-             '--lyrics-pane-width': `${splitRatio * 100}%`,
-             '--lyrics-pane-height': `${splitRatio * 100}%`,
-           } as React.CSSProperties : undefined}
-         >
+      {/* Lyrics take the whole page; the video (if on) floats as a small popup. */}
+      <div className="flex-1 min-h-0 overflow-hidden relative">
+         <div className="w-full h-full min-h-0 relative">
              <div
                ref={scrollContainerRef}
                onWheel={syncClockToManualScroll}
@@ -1491,43 +1485,22 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-black to-transparent pointer-events-none z-10"></div>
          </div>
 
-         {/* Draggable divider — desktop only */}
-         {karaokeEnabled && (
-           <div
-             onPointerDown={handleSplitPointerDown}
-             onPointerMove={handleSplitPointerMove}
-             onPointerUp={handleSplitPointerUp}
-             className="flex items-center justify-center h-3 md:h-full md:w-2 cursor-row-resize md:cursor-col-resize order-2 shrink-0 group/divider z-20 bg-white/[0.03] hover:bg-white/[0.08] active:bg-indigo-500/20 transition-colors"
-             style={{ touchAction: 'none' }}
-           >
-             <div className="h-0.5 w-12 md:w-0.5 md:h-12 rounded-full bg-white/25 group-hover/divider:bg-indigo-400/60 group-active/divider:bg-indigo-400 transition-colors"></div>
-           </div>
-         )}
-
          {karaokeEnabled && (
              <div
-               className="teleprompter-video-pane bg-black/50 backdrop-blur-xl flex flex-col border-b md:border-b-0 md:border-l border-white/[0.05] shadow-2xl animate-in slide-in-from-right duration-300 order-1 md:order-3 shrink-0"
-               style={{
-                 '--video-pane-height': `${(1 - splitRatio) * 100}%`,
-                 minWidth: 0,
-               } as React.CSSProperties}
+               className={`absolute z-40 bottom-4 right-4 max-w-[calc(100vw-2rem)] bg-black/75 backdrop-blur-xl flex flex-col border border-white/10 shadow-2xl rounded-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300 ${videoExpanded ? 'w-[min(92vw,440px)]' : 'w-[min(72vw,244px)]'}`}
              >
-                 <div className="p-3 md:p-4 bg-white/[0.03] border-b border-white/[0.05] flex items-center justify-between backdrop-blur-lg">
-                     <div className="flex items-center gap-2 text-indigo-400 font-bold uppercase tracking-widest text-xs">
-                         <Youtube className="w-4 h-4" /> 
-                         {sourceLabel}
+                 <div className="p-2 md:p-2.5 bg-white/[0.04] border-b border-white/[0.06] flex items-center justify-between backdrop-blur-lg">
+                     <div className="flex items-center gap-1.5 text-indigo-300 font-bold uppercase tracking-widest text-[10px] truncate">
+                         <Youtube className="w-3.5 h-3.5 shrink-0" />
+                         <span className="truncate">{sourceLabel}</span>
                      </div>
-                     <div className="flex gap-1.5">
+                     <div className="flex gap-1 shrink-0">
                          <button onClick={() => { setFallbackLevel(5); setActiveSource(null); setDynamicVideoId(null); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel === 5 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Karaoke source"><Mic2 className="w-3 h-3"/></button>
                          <button onClick={() => { setFallbackLevel(1); setActiveSource(null); setDynamicVideoId(null); setIframeKey(k => k+1); }} className={`p-1.5 rounded-lg transition-all ${fallbackLevel > 0 && fallbackLevel < 5 ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/30' : 'bg-white/[0.04] text-gray-500'}`} title="Original source"><Youtube className="w-3 h-3"/></button>
-                         {/* Minimize / expand the video pane (gives lyrics more room) */}
-                         <button
-                           onClick={() => setSplitRatio(r => (r >= 0.78 ? 0.55 : 0.82))}
-                           className="p-1.5 rounded-lg transition-all bg-white/[0.04] text-gray-400 hover:text-white hover:bg-white/[0.08]"
-                           title={splitRatio >= 0.78 ? 'Expand video' : 'Minimize video'}
-                         >
-                           {splitRatio >= 0.78 ? <Plus className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
+                         <button onClick={() => setVideoExpanded(v => !v)} className="p-1.5 rounded-lg transition-all bg-white/[0.04] text-gray-400 hover:text-white hover:bg-white/[0.08]" title={videoExpanded ? 'Shrink video' : 'Expand video'}>
+                           {videoExpanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
                          </button>
+                         <button onClick={() => setKaraokeEnabled(false)} className="p-1.5 rounded-lg transition-all bg-white/[0.04] text-gray-400 hover:text-white hover:bg-white/[0.08]" title="Close video"><X className="w-3 h-3" /></button>
                      </div>
                  </div>
 
@@ -1561,7 +1534,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                      )}
                  </div>
 
-                 <div className="p-4 md:p-5 flex-1 bg-black/30 flex flex-col gap-4 overflow-y-auto backdrop-blur-lg">
+                 <div className={`p-4 md:p-5 bg-black/30 flex-col gap-4 overflow-y-auto backdrop-blur-lg max-h-[46vh] ${videoExpanded ? 'flex' : 'hidden'}`}>
                       <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
                           <div className="flex items-center justify-between gap-3">
                               <div className="min-w-0">

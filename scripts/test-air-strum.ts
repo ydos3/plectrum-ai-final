@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
-import { StrumDetector } from '../services/airStrumDetector.ts';
+import { StrumDetector, stringIndexFromX, chordIndexFromX } from '../services/airStrumDetector.ts';
 import { parseFingerstyleTab } from '../services/tabParser.ts';
+
+// ─── Hand-position → string / chord mapping ──────────────────────────────────
+{
+  // 6 strings centred at x = 0.10, 0.26, 0.42, 0.58, 0.74, 0.90.
+  assert.equal(stringIndexFromX(0.10), 0, 'low E at left edge');
+  assert.equal(stringIndexFromX(0.26), 1, 'A');
+  assert.equal(stringIndexFromX(0.42), 2, 'D');
+  assert.equal(stringIndexFromX(0.58), 3, 'G');
+  assert.equal(stringIndexFromX(0.74), 4, 'B string reachable');
+  assert.equal(stringIndexFromX(0.90), 5, 'high e reachable');
+  // Edge tolerance: a hand slightly short of / past the band still hits the outer strings.
+  assert.equal(stringIndexFromX(0.06), 0, 'just left of band → low E');
+  assert.equal(stringIndexFromX(0.95), 5, 'just right of band → high e');
+
+  // 6 chord chips spread 0..1.
+  assert.equal(chordIndexFromX(0.0, 6), 0, 'first chord');
+  assert.equal(chordIndexFromX(0.6, 6), 3, 'fourth chord (G in Bollywood set)');
+  assert.equal(chordIndexFromX(1.0, 6), 5, 'last chord');
+}
 
 // ─── Strum detector ────────────────────────────────────────────────────────
 
