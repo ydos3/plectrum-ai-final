@@ -194,6 +194,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const activeLineIndexRef = useRef<number>(-1);
   const manualScrollHoldUntilRef = useRef(0);
   const autoFollowResumeRef = useRef<number | null>(null);
+  const autoFollowPausedRef = useRef(false);
+  const fontSizeRef = useRef(24);
   const programmaticScrollUntilRef = useRef(0);
   const autoScrollCurrentRef = useRef<number | null>(null);
   const lineCenterCacheRef = useRef<Map<number, number>>(new Map());
@@ -308,6 +310,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   useEffect(() => () => {
     if (autoFollowResumeRef.current) window.clearTimeout(autoFollowResumeRef.current);
   }, []);
+
+  // Mirror to refs so the scroll loop reads live values without restarting.
+  useEffect(() => { autoFollowPausedRef.current = autoFollowPaused; }, [autoFollowPaused]);
+  useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
 
   // ─── Parse Song Content ────────────────────────────────────────────
 
@@ -812,32 +818,44 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         return;
       }
 
-      const nextTime = currentTimeRef.current + (deltaTime * playbackSpeed);
-      const clampedTime = Math.min(actualDuration, Math.max(0, nextTime));
-      currentTimeRef.current = clampedTime;
+      // ── Pure teleprompter (no video): smooth constant-rate auto-scroll the
+      // user controls DIRECTLY with the speed control. Pixels/second scales with
+      // playbackSpeed, so +/- speed visibly changes the scroll rate. Manual
+      // scrolling pauses this (autoFollowPaused) and auto-resumes after a moment.
+      const container = scrollContainerRef.current;
+      if (!container) { scrollTimerRef.current = requestAnimationFrame(scrollLoop); return; }
+      const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+      const paused = autoFollowPausedRef.current || Date.now() < manualScrollHoldUntilRef.current;
 
-      const newActiveIdx = getActiveLineForTime(clampedTime, timings);
-      if (newActiveIdx >= 0 && newActiveIdx !== activeLineIndexRef.current) {
-        const previousLine = activeLineIndexRef.current;
-        if (previousLine >= 0) {
-          lineFillRefs.current[previousLine]?.style.setProperty('--karaoke-fill', '100%');
+      if (!paused) {
+        const pxPerSec = fontSizeRef.current * 3 * playbackSpeed; // readable pace, speed-scaled
+        const base = autoScrollCurrentRef.current ?? container.scrollTop;
+        const next = Math.min(maxScroll, base + pxPerSec * deltaTime);
+        programmaticScrollUntilRef.current = Date.now() + 160;
+        container.scrollTop = next;
+        autoScrollCurrentRef.current = next;
+
+        // Highlight the lyric line nearest the viewport centre.
+        const centerY = next + container.clientHeight * 0.5;
+        let bestIdx = -1;
+        let bestDist = Infinity;
+        for (let i = 0; i < lineRefs.current.length; i++) {
+          const el = lineRefs.current[i];
+          if (!el) continue;
+          const c = el.offsetTop + el.clientHeight / 2;
+          const d = Math.abs(c - centerY);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
         }
-        activeLineIndexRef.current = newActiveIdx;
-        setActiveLineIndex(newActiveIdx);
-      }
-      updateKaraokeFill(clampedTime, timings, activeLineIndexRef.current);
-      scrollToProgress(clampedTime, timings, activeLineIndexRef.current);
+        if (bestIdx >= 0 && bestIdx !== activeLineIndexRef.current) {
+          activeLineIndexRef.current = bestIdx;
+          setActiveLineIndex(bestIdx);
+        }
 
-      if (frameTime - lastClockStateSyncRef.current > 250 || clampedTime >= actualDuration) {
-        lastClockStateSyncRef.current = frameTime;
-        setCurrentTime(clampedTime);
+        if (next >= maxScroll - 0.5) { setIsPlaying(false); return; }
       }
 
-      if (clampedTime < actualDuration) {
-        scrollTimerRef.current = requestAnimationFrame(scrollLoop);
-      } else {
-        setIsPlaying(false);
-      }
+      currentTimeRef.current += deltaTime * playbackSpeed;
+      scrollTimerRef.current = requestAnimationFrame(scrollLoop);
     };
 
     scrollTimerRef.current = requestAnimationFrame(scrollLoop);

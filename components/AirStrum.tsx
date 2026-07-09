@@ -271,7 +271,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         style={{ background: 'radial-gradient(ellipse at 50% 40%, #23110a 0%, #120a06 55%, #060302 100%)' }}
       >
         {/* Camera: shows the full you */}
-        <video ref={videoRef} playsInline muted autoPlay className={`absolute inset-0 w-full h-full object-cover -scale-x-100 transition-opacity duration-500 ${cameraOn ? 'opacity-90' : 'opacity-0'}`} />
+        <video ref={videoRef} playsInline muted autoPlay className={`absolute inset-0 w-full h-full object-cover -scale-x-100 transition-opacity duration-500 ${cameraOn ? 'opacity-[0.55]' : 'opacity-0'}`} />
         <canvas ref={procCanvasRef} width={112} height={84} className="hidden" />
         {/* subtle darken for contrast against overlays */}
         <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(6,3,2,0.55), rgba(6,3,2,0.15) 30%, rgba(6,3,2,0.35))' }} />
@@ -379,8 +379,8 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         )}
 
         {cameraOn && !handInFrame && (
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 bg-black/55 text-amber-200 text-xs px-4 py-2 rounded-lg border border-amber-900/40 pointer-events-none text-center">
-            Point &amp; hold up top to pick a chord<br/>Sweep your hand up/down below to strum
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 bg-black/55 text-amber-200 text-[11px] px-4 py-2 rounded-full border border-amber-900/40 pointer-events-none text-center backdrop-blur-sm">
+            Point &amp; hold a chord up top · sweep up/down below to strum
           </div>
         )}
       </div>

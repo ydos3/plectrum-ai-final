@@ -171,13 +171,27 @@ export class ParticleField {
     ctx.globalCompositeOperation = 'source-over';
 
     // ── Strings ────────────────────────────────────────────────────────────────
+    // Confined to a lower "guitar body" band with softly faded ends — elegant
+    // glowing strings, NOT full-height jail bars across the whole frame.
+    const yTop = h * 0.34;
+    const yBot = h * 0.95;
+    const span = yBot - yTop;
+
+    // Warm body glow behind the strings (a soft soundhole halo).
+    const bodyGlow = ctx.createRadialGradient(w * 0.5, yTop + span * 0.55, 0, w * 0.5, yTop + span * 0.55, Math.max(w, span) * 0.5);
+    bodyGlow.addColorStop(0, 'rgba(245,158,11,0.10)');
+    bodyGlow.addColorStop(1, 'rgba(245,158,11,0)');
+    ctx.fillStyle = bodyGlow;
+    ctx.fillRect(0, yTop, w, span);
+
+    const yAt = (yn: number) => yTop + yn * span;
+
     for (let i = 0; i < this.strings.length; i++) {
       const s = this.strings[i];
       const baseX = this.stringX(i);
       const ringing = s.amp > 0.3;
 
-      // Motion-blur spindle: a translucent lens widest at the centre, showing
-      // the string vibrating tightly. Settles fast.
+      // Motion-blur spindle: a translucent lens widest at the centre.
       if (ringing) {
         const A = s.amp * (0.85 + 0.15 * Math.sin(this.timeSec * s.freq * 6.28 + s.phase));
         const segs = 24;
@@ -185,40 +199,38 @@ export class ParticleField {
         for (let k = 0; k <= segs; k++) {
           const yn = k / segs;
           const wgt = Math.sin(Math.PI * yn);
-          const x = baseX - A * wgt;
-          ctx.lineTo(x, yn * h);
+          ctx.lineTo(baseX - A * wgt, yAt(yn));
         }
         for (let k = segs; k >= 0; k--) {
           const yn = k / segs;
           const wgt = Math.sin(Math.PI * yn);
-          const x = baseX + A * wgt;
-          ctx.lineTo(x, yn * h);
+          ctx.lineTo(baseX + A * wgt, yAt(yn));
         }
         ctx.closePath();
         ctx.fillStyle = `rgba(253,230,138,${(s.amp / MAX_STRING_AMP) * 0.4})`;
         ctx.fill();
       }
 
-      const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, 'rgba(255,240,205,0.4)');
-      grad.addColorStop(0.25, '#fde68a');
-      grad.addColorStop(0.55, '#f59e0b');
-      grad.addColorStop(0.8, '#b45309');
-      grad.addColorStop(1, 'rgba(120,53,15,0.4)');
+      // Soft-ended gradient along the string band (fades at nut & bridge).
+      const grad = ctx.createLinearGradient(0, yTop, 0, yBot);
+      grad.addColorStop(0, 'rgba(253,230,138,0)');
+      grad.addColorStop(0.12, 'rgba(253,230,138,0.85)');
+      grad.addColorStop(0.5, '#f59e0b');
+      grad.addColorStop(0.88, 'rgba(180,83,9,0.85)');
+      grad.addColorStop(1, 'rgba(180,83,9,0)');
       ctx.strokeStyle = grad;
-      ctx.lineWidth = s.thickness;
+      ctx.lineWidth = Math.max(2, s.thickness - 2.5); // slimmer, elegant
       ctx.lineCap = 'round';
-      ctx.shadowColor = 'rgba(245,158,11,0.85)';
-      ctx.shadowBlur = ringing ? 12 : 5;
+      ctx.shadowColor = 'rgba(245,158,11,0.7)';
+      ctx.shadowBlur = ringing ? 12 : 4;
 
-      // Crisp centreline (oscillates within the spindle for a taut-string feel).
       const osc = ringing ? s.amp * 0.5 * Math.sin(this.timeSec * s.freq * 6.28 + s.phase) : 0;
       ctx.beginPath();
       const segs = ringing ? 16 : 1;
       for (let k = 0; k <= segs; k++) {
         const yn = k / segs;
         const x = baseX + osc * Math.sin(Math.PI * yn);
-        if (k === 0) ctx.moveTo(x, 0); else ctx.lineTo(x, yn * h);
+        if (k === 0) ctx.moveTo(x, yAt(yn)); else ctx.lineTo(x, yAt(yn));
       }
       ctx.stroke();
     }
