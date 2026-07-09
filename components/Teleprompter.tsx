@@ -276,9 +276,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   useEffect(() => {
     if (!karaokeEnabled || !playerReady || !playerRef.current?.setPlaybackRate) return;
-    playerRef.current.setPlaybackRate(youtubePlaybackRate);
+    // The video ALWAYS plays at normal (1x) speed. The teleprompter speed
+    // control is for lyric scrolling only and never touches the video.
+    playerRef.current.setPlaybackRate(1);
     syncPlaybackClockNow(isPlaying);
-  }, [isPlaying, karaokeEnabled, playerReady, youtubePlaybackRate, syncPlaybackClockNow]);
+  }, [isPlaying, karaokeEnabled, playerReady, syncPlaybackClockNow]);
 
   // ─── Resizable Split Drag Handlers ─────────────────────────────────
 
@@ -966,7 +968,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                       if (d > 0 && !getSongMetadataDuration(song)) setActualDuration(d);
                   }
                   if (event.target.setPlaybackRate) {
-                      event.target.setPlaybackRate(youtubePlaybackRate);
+                      event.target.setPlaybackRate(1); // video always plays at normal speed
                   }
                   syncPlaybackClockNow(false);
                   event.target.playVideo();

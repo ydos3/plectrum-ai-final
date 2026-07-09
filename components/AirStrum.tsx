@@ -25,8 +25,9 @@ const STRING_LABELS = ['E', 'A', 'D', 'G', 'B', 'e'];
 const STRINGS_LEFT = 0.10;
 const STRINGS_SPAN = 0.80;
 const NOTE_ZONE_TOP = 0.36;    // upper portion of the stage = "point to pick a chord"
-const NOTE_SELECT_DWELL = 240; // ms of pointing before a chord commits
+const NOTE_SELECT_DWELL = 200; // ms of pointing before a chord commits
 const MOTION_GATE = 0.004;     // low so gentle hand movement still registers
+const HAND_PERSIST_MS = 650;   // treat the hand as still-present briefly after motion stops
 
 const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const [cameraState, setCameraState] = useState<CameraState>('idle');
@@ -34,7 +35,6 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const [chordIndex, setChordIndex] = useState(0);
   const [resonance, setResonanceState] = useState(() => getResonance());
   const [handInFrame, setHandInFrame] = useState(false);
-  const [pointer, setPointer] = useState<{ x: number; y: number; mode: 'note' | 'strum' } | null>(null);
   const [hoverNote, setHoverNote] = useState(-1);
   const [hoverProgress, setHoverProgress] = useState(0);
   const [playingString, setPlayingString] = useState(-1);
@@ -51,6 +51,9 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const activityRef = useRef<{ x: number; y: number; mode: 'note' | 'strum' | null; string: number; mag: number; t: number; progress: number }>({ x: 0.5, y: 0.5, mode: null, string: -1, mag: 0, t: 0, progress: 0 });
   const perStringLastRef = useRef<number[]>(Array(6).fill(0));
   const lastHandStringRef = useRef(-1);
+  // Last position where motion was seen — lets a still "point" keep registering
+  // for a moment so holding a finger on a chord selects reliably.
+  const lastSeenRef = useRef<{ x: number; y: number; t: number }>({ x: 0.5, y: 0.5, t: 0 });
   const hoverNoteRef = useRef<{ idx: number; since: number; committed: number }>({ idx: -1, since: 0, committed: -1 });
 
   const scale = SCALE_PRESETS[scaleIndex];
@@ -136,11 +139,19 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         const cy = sumMotion > 0 ? (sumY / sumMotion) / h : 0.5;
         const now = performance.now();
 
-        if (mag > MOTION_GATE) {
-          if (cy < NOTE_ZONE_TOP) {
+        const seen = mag > MOTION_GATE;
+        if (seen) lastSeenRef.current = { x: cx, y: cy, t: now };
+        const recent = now - lastSeenRef.current.t < HAND_PERSIST_MS;
+        // Effective position: live when moving, last-known when briefly still,
+        // so pointing at a chord and holding still keeps registering.
+        const ex = seen ? cx : lastSeenRef.current.x;
+        const ey = seen ? cy : lastSeenRef.current.y;
+
+        if (seen || recent) {
+          if (ey < NOTE_ZONE_TOP) {
             // Point-and-hold to pick a chord: map X across the chord chips.
             const len = scaleLenRef.current;
-            const idx = Math.max(0, Math.min(len - 1, Math.round(cx * (len - 1))));
+            const idx = Math.max(0, Math.min(len - 1, Math.round(ex * (len - 1))));
             const hv = hoverNoteRef.current;
             if (idx !== hv.idx) { hv.idx = idx; hv.since = now; }
             const progress = Math.min(1, (now - hv.since) / NOTE_SELECT_DWELL);
@@ -149,23 +160,26 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
               selectChordRef.current(idx);
             }
             lastHandStringRef.current = -1;
-            activityRef.current = { x: cx, y: cy, mode: 'note', string: -1, mag, t: now, progress };
+            activityRef.current = { x: ex, y: ey, mode: 'note', string: -1, mag, t: now, progress };
           } else {
-            // Strum zone: pluck ONLY the string the hand is over. Each string is
-            // independent — moving across sounds them one at a time (a sweep
-            // becomes a natural strum), and hovering one string plays just that one.
+            // Strum zone: pluck ONLY the string the hand is over — and only on
+            // real motion, so a resting hand doesn't machine-gun a string.
             hoverNoteRef.current.idx = -1; hoverNoteRef.current.committed = -1;
-            const frac = (cx - STRINGS_LEFT) / STRINGS_SPAN;
-            const s = Math.max(0, Math.min(5, Math.round(frac * 5)));
-            if (s !== lastHandStringRef.current && now - perStringLastRef.current[s] > 90) {
-              perStringLastRef.current[s] = now;
-              pluckRef.current(s);
+            let s = -1;
+            if (seen) {
+              const frac = (ex - STRINGS_LEFT) / STRINGS_SPAN;
+              s = Math.max(0, Math.min(5, Math.round(frac * 5)));
+              if (s !== lastHandStringRef.current && now - perStringLastRef.current[s] > 90) {
+                perStringLastRef.current[s] = now;
+                pluckRef.current(s);
+              }
+              lastHandStringRef.current = s;
             }
-            lastHandStringRef.current = s;
-            activityRef.current = { x: cx, y: cy, mode: 'strum', string: s, mag, t: now, progress: 0 };
+            activityRef.current = { x: ex, y: ey, mode: 'strum', string: s, mag, t: now, progress: 0 };
           }
         } else {
           lastHandStringRef.current = -1;
+          hoverNoteRef.current.committed = -1; // allow re-picking the same chord after the hand leaves
         }
       }
     }
@@ -178,7 +192,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     if (videoRef.current) videoRef.current.srcObject = null;
     prevLumaRef.current = null;
     lastHandStringRef.current = -1;
-    setHandInFrame(false); setPointer(null); setHoverNote(-1); setPlayingString(-1);
+    setHandInFrame(false); setHoverNote(-1); setPlayingString(-1);
   }, []);
 
   const startCamera = useCallback(async () => {
@@ -203,8 +217,8 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     const interval = window.setInterval(() => {
       const a = activityRef.current;
       const fresh = performance.now() - a.t < 320;
-      if (fresh && a.mode) { setHandInFrame(true); setPointer({ x: a.x, y: a.y, mode: a.mode }); setHoverNote(a.mode === 'note' ? hoverNoteRef.current.idx : -1); setHoverProgress(a.mode === 'note' ? a.progress : 0); setPlayingString(a.string); }
-      else { setHandInFrame(false); setPointer(null); setHoverNote(-1); setHoverProgress(0); setPlayingString(-1); }
+      if (fresh && a.mode) { setHandInFrame(true); setHoverNote(a.mode === 'note' ? hoverNoteRef.current.idx : -1); setHoverProgress(a.mode === 'note' ? a.progress : 0); setPlayingString(a.string); }
+      else { setHandInFrame(false); setHoverNote(-1); setHoverProgress(0); setPlayingString(-1); }
     }, 100);
     return () => window.clearInterval(interval);
   }, [cameraState]);
@@ -324,17 +338,6 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
             ))}
           </div>
         </div>
-
-        {/* Camera pointer indicator */}
-        {cameraOn && pointer && (
-          <div className="absolute z-20 pointer-events-none -translate-x-1/2 -translate-y-1/2 rounded-full"
-            style={{
-              left: `${pointer.x * 100}%`, top: `${pointer.y * 100}%`,
-              width: 34, height: 34,
-              background: pointer.mode === 'note' ? 'radial-gradient(circle, rgba(167,139,250,0.8), transparent 70%)' : 'radial-gradient(circle, rgba(245,158,11,0.8), transparent 70%)',
-              boxShadow: pointer.mode === 'note' ? '0 0 24px rgba(167,139,250,0.8)' : '0 0 24px rgba(245,158,11,0.8)',
-            }} />
-        )}
 
         {/* Current chord badge */}
         <div className="absolute bottom-2 left-3 z-20 flex items-center gap-2 bg-black/50 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-amber-900/40">
