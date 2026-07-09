@@ -747,8 +747,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       return;
     }
 
-    const timings = getLineTimings();
-    const syncedCues = getSyncedLineCues();
+    // Begin scrolling from wherever the lyrics currently sit.
+    autoScrollCurrentRef.current = scrollContainerRef.current?.scrollTop ?? 0;
     let lastFrameTime = performance.now();
 
     const scrollLoop = (frameTime: number) => {
@@ -756,72 +756,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       const deltaTime = Math.min(Math.max(0, (frameTime - lastFrameTime) / 1000), 0.1);
       lastFrameTime = frameTime;
 
-      if (isSyncedLyricsMode) {
-        const videoTimeMs = getEstimatedPlaybackTimeMs();
-        const lyricTimeMs = videoTimeToLyricTimeMs(videoTimeMs, syncCorrection);
-        const activeCueIndex = findActiveCueIndex(syncedCues, lyricTimeMs, true);
-        const newActiveIdx = activeCueIndex >= 0 ? syncedCues[activeCueIndex].lineIndex : -1;
-        const activeChanged = newActiveIdx !== activeLineIndexRef.current;
-
-        currentTimeRef.current = lyricTimeMs / 1000;
-
-        if (activeChanged) {
-          const previousLine = activeLineIndexRef.current;
-          if (previousLine >= 0 && newActiveIdx > previousLine) {
-            lineFillRefs.current[previousLine]?.style.setProperty('--karaoke-fill', '100%');
-          }
-          activeLineIndexRef.current = newActiveIdx;
-          setActiveLineIndex(newActiveIdx);
-        }
-
-        updateKaraokeFill(lyricTimeMs, timings, activeLineIndexRef.current, syncedCues);
-        if (activeChanged || autoScrollCurrentRef.current === null) {
-          scrollToProgress(lyricTimeMs / 1000, timings, activeLineIndexRef.current);
-        }
-
-        if (frameTime - lastClockStateSyncRef.current > 250 || videoTimeMs >= actualDuration * 1000) {
-          lastClockStateSyncRef.current = frameTime;
-          setCurrentTime(lyricTimeMs / 1000);
-        }
-
-        if (videoTimeMs < actualDuration * 1000) {
-          scrollTimerRef.current = requestAnimationFrame(scrollLoop);
-        } else {
-          setIsPlaying(false);
-        }
-        return;
-      }
-
-      if (karaokeEnabled && playerReady) {
-        // Karaoke without word/line-timed lyrics: follow the YouTube clock and
-        // drive the active line + auto-scroll from time-based estimates so the
-        // lyrics still scroll in sync with the song.
-        const videoTime = getEstimatedPlaybackTimeMs() / 1000;
-        const clampedVideoTime = Math.min(actualDuration, Math.max(0, videoTime));
-        currentTimeRef.current = clampedVideoTime;
-
-        const newActiveIdx = getActiveLineForTime(clampedVideoTime, timings);
-        if (newActiveIdx >= 0 && newActiveIdx !== activeLineIndexRef.current) {
-          const previousLine = activeLineIndexRef.current;
-          if (previousLine >= 0) lineFillRefs.current[previousLine]?.style.setProperty('--karaoke-fill', '100%');
-          activeLineIndexRef.current = newActiveIdx;
-          setActiveLineIndex(newActiveIdx);
-        }
-        updateKaraokeFill(clampedVideoTime, timings, activeLineIndexRef.current);
-        scrollToProgress(clampedVideoTime, timings, activeLineIndexRef.current);
-
-        if (frameTime - lastClockStateSyncRef.current > 250) {
-          lastClockStateSyncRef.current = frameTime;
-          setCurrentTime(clampedVideoTime);
-        }
-        scrollTimerRef.current = requestAnimationFrame(scrollLoop);
-        return;
-      }
-
-      // ── Pure teleprompter (no video): smooth constant-rate auto-scroll the
-      // user controls DIRECTLY with the speed control. Pixels/second scales with
-      // playbackSpeed, so +/- speed visibly changes the scroll rate. Manual
-      // scrolling pauses this (autoFollowPaused) and auto-resumes after a moment.
+      // ── Smooth, Spotify-style teleprompter scroll (all modes) ───────────────
+      // The backing video (if any) is just the audio. Lyrics scroll at a smooth,
+      // constant, user-controlled rate — the +/- control sets the SCROLL speed,
+      // never the video's playback rate. Manual scrolling peeks without breaking
+      // the flow and auto-resumes.
       const container = scrollContainerRef.current;
       if (!container) { scrollTimerRef.current = requestAnimationFrame(scrollLoop); return; }
       const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -851,7 +790,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
           setActiveLineIndex(bestIdx);
         }
 
-        if (next >= maxScroll - 0.5) { setIsPlaying(false); return; }
+        if (next >= maxScroll - 0.5) {
+          // Reached the end — stop scrolling and pause the backing video too.
+          if (karaokeEnabled && playerReady) { try { playerRef.current?.pauseVideo?.(); } catch { /* ignore */ } }
+          setIsPlaying(false);
+          return;
+        }
       }
 
       currentTimeRef.current += deltaTime * playbackSpeed;
@@ -863,72 +807,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
     };
-  }, [isPlaying, playbackSpeed, actualDuration, karaokeEnabled, playerReady, isSyncedLyricsMode, getEstimatedPlaybackTimeMs, syncCorrection, getLineTimings, getSyncedLineCues, getActiveLineForTime, scrollToProgress, updateKaraokeFill]);
+  }, [isPlaying, playbackSpeed, karaokeEnabled, playerReady]);
 
-  // Keep the lyric clock aligned to YouTube while paused. During karaoke playback, the main loop follows YouTube time.
-  // Respects manualScrollHoldUntilRef so user scroll is not overridden.
-  useEffect(() => {
-    if (!karaokeEnabled || !playerReady || isPlaying) return;
-
-    const timings = getLineTimings();
-    const syncedCues = getSyncedLineCues();
-
-    let rafId: number | null = null;
-    let lastSync = 0;
-
-    const syncWhilePaused = (frameTime: number) => {
-      if (frameTime - lastSync < 250) {
-        rafId = requestAnimationFrame(syncWhilePaused);
-        return;
-      }
-      lastSync = frameTime;
-
-      if (playerRef.current?.getCurrentTime) {
-        const clockSample = syncPlaybackClockNow(false);
-        const videoTimeMs = clockSample.mediaTimeMs;
-
-        if (isSyncedLyricsMode) {
-          const lyricTimeMs = videoTimeToLyricTimeMs(videoTimeMs, syncCorrection);
-          const activeCueIndex = findActiveCueIndex(syncedCues, lyricTimeMs, true);
-          const newActiveIdx = activeCueIndex >= 0 ? syncedCues[activeCueIndex].lineIndex : -1;
-          currentTimeRef.current = lyricTimeMs / 1000;
-
-          if (newActiveIdx !== activeLineIndexRef.current) {
-            activeLineIndexRef.current = newActiveIdx;
-            setActiveLineIndex(newActiveIdx);
-          }
-
-          updateKaraokeFill(lyricTimeMs, timings, activeLineIndexRef.current, syncedCues);
-          setCurrentTime(lyricTimeMs / 1000);
-          if (Date.now() >= manualScrollHoldUntilRef.current && !autoFollowPaused) {
-            scrollToProgress(lyricTimeMs / 1000, timings, activeLineIndexRef.current);
-          }
-        } else if (!hasTimedLyrics) {
-          const clampedTime = Math.min(actualDuration, Math.max(0, videoTimeMs / 1000));
-          currentTimeRef.current = clampedTime;
-          setCurrentTime(clampedTime);
-        } else {
-          const clampedTime = Math.min(actualDuration, Math.max(0, videoTimeMs / 1000));
-          currentTimeRef.current = clampedTime;
-
-          const newActiveIdx = getActiveLineForTime(clampedTime, timings);
-          if (newActiveIdx !== activeLineIndexRef.current && newActiveIdx >= 0) {
-            activeLineIndexRef.current = newActiveIdx;
-            setActiveLineIndex(newActiveIdx);
-          }
-          updateKaraokeFill(clampedTime, timings, activeLineIndexRef.current);
-          setCurrentTime(clampedTime);
-        }
-      }
-      rafId = requestAnimationFrame(syncWhilePaused);
-    };
-
-    rafId = requestAnimationFrame(syncWhilePaused);
-
-    return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    };
-  }, [karaokeEnabled, playerReady, isPlaying, isSyncedLyricsMode, hasTimedLyrics, syncPlaybackClockNow, syncCorrection, autoFollowPaused, actualDuration, getLineTimings, getSyncedLineCues, getActiveLineForTime, scrollToProgress, updateKaraokeFill]);
+  // (Removed the "sync-while-paused" loop: it followed YouTube time and kept
+  // scrolling the lyrics while paused. Pausing now cleanly stops the scroll.)
 
   // ─── YouTube Setup ─────────────────────────────────────────────────
 
@@ -1495,9 +1377,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   };
 
   const isAiGenerated = (song as any).source === 'ai';
-  const footerSpeed = isSyncedLyricsMode ? youtubePlaybackRate : playbackSpeed;
-  const updateFooterSpeed = isSyncedLyricsMode ? updateYouTubePlaybackRate : updatePlaybackSpeed;
-  const footerSpeedLabel = isSyncedLyricsMode ? 'Video' : 'Speed';
+  // The +/- control always sets the TELEPROMPTER SCROLL speed — never the
+  // YouTube video's playback rate.
+  const footerSpeed = playbackSpeed;
+  const updateFooterSpeed = updatePlaybackSpeed;
+  const footerSpeedLabel = 'Scroll';
   const activeTranscriptLine = activeLineIndex >= 0
     ? parsedLines.current[activeLineIndex]?.lyricsOnly || parsedLines.current[activeLineIndex]?.text || ''
     : '';
@@ -1775,12 +1659,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              
              {/* Playback Speed Control */}
              <div className="flex items-center gap-1 md:gap-2 px-1.5 md:px-4 border-r border-white/[0.06] pr-2 md:pr-6">
-                 <button onClick={() => updateFooterSpeed(isSyncedLyricsMode ? -0.25 : -0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
+                 <button onClick={() => updateFooterSpeed(-0.1)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
                  <div className="flex flex-col items-center w-12 md:w-16">
                     <span className="text-lg md:text-2xl font-bold text-blue-400">{footerSpeed.toFixed(2).replace(/0$/, '')}x</span>
                     <span className="text-[8px] text-gray-400 uppercase tracking-widest font-bold">{footerSpeedLabel}</span>
                  </div>
-                 <button onClick={() => updateFooterSpeed(isSyncedLyricsMode ? 0.25 : 0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Plus className="w-4 h-4"/></button>
+                 <button onClick={() => updateFooterSpeed(0.1)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Plus className="w-4 h-4"/></button>
              </div>
              
              <button onClick={handlePlayPause} className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-2xl transition-all transform active:scale-90 border-2 ${
