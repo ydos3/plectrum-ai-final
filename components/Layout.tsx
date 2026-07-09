@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Image as ImageIcon, PlusCircle, Search, Menu, X, BookOpen, LogOut, User as UserIcon, Guitar, Globe, Video, HelpCircle, ChevronRight, Sparkles, Hand } from 'lucide-react';
+import { MessageSquare, Image as ImageIcon, PlusCircle, Search, Menu, X, BookOpen, LogOut, User as UserIcon, Guitar, Globe, Video, HelpCircle, ChevronRight, ChevronLeft, Sparkles, Hand } from 'lucide-react';
 import { ViewState, User, AppLanguage } from '../types';
 import { playLogoChord, playNavChord } from '../services/audioService';
 import { logout } from '../services/authService';
@@ -34,6 +34,15 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isStrumming, setIsStrumming] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try { return localStorage.getItem('plectrum_nav_collapsed') === '1'; } catch { return false; }
+  });
+
+  const toggleNavCollapsed = () => setNavCollapsed(prev => {
+    const next = !prev;
+    try { localStorage.setItem('plectrum_nav_collapsed', next ? '1' : '0'); } catch { /* ignore */ }
+    return next;
+  });
 
   // Tour State
   const [tourStep, setTourStep] = useState(0);
@@ -165,10 +174,32 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[#0a0503]">
-      {/* Sidebar - Desktop (Hidden in Practice Room) */}
-      {!isImmersiveMode && (
+      {/* Collapsed-sidebar expand handle (desktop) */}
+      {!isImmersiveMode && navCollapsed && (
+        <button
+          onClick={toggleNavCollapsed}
+          aria-label="Expand sidebar"
+          title="Expand menu"
+          className="hidden md:flex fixed top-4 left-4 z-40 w-10 h-10 items-center justify-center rounded-xl bg-[#2d1b15]/90 border border-[#5d4037] text-amber-300 hover:text-white hover:bg-[#3e2723] shadow-xl backdrop-blur"
+        >
+          <ChevronRight className="w-5 h-5" />
+        </button>
+      )}
+
+      {/* Sidebar - Desktop (Hidden in Practice Room / when collapsed) */}
+      {!isImmersiveMode && !navCollapsed && (
         <aside className="hidden md:flex flex-col w-72 border-r border-[#5d4037] bg-[#2d1b15] shadow-2xl relative z-20 shrink-0">
           <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')] opacity-20 pointer-events-none"></div>
+
+          {/* Collapse toggle */}
+          <button
+            onClick={(e) => { e.stopPropagation(); toggleNavCollapsed(); }}
+            aria-label="Collapse sidebar"
+            title="Collapse menu"
+            className="absolute top-3 right-3 z-30 w-8 h-8 flex items-center justify-center rounded-lg text-amber-500/70 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
 
           {/* Logo Section */}
           <div className="p-8 border-b border-[#5d4037] relative z-10 bg-[#1a0f0a]/60 text-center cursor-pointer group select-none overflow-visible" onClick={handleLogoClick}>

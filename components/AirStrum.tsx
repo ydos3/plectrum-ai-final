@@ -51,8 +51,6 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const activityRef = useRef<{ x: number; y: number; mode: 'note' | 'strum' | null; string: number; mag: number; t: number; progress: number }>({ x: 0.5, y: 0.5, mode: null, string: -1, mag: 0, t: 0, progress: 0 });
   const perStringLastRef = useRef<number[]>(Array(6).fill(0));
   const lastHandStringRef = useRef(-1);
-  const lastStrumYRef = useRef<{ y: number; t: number }>({ y: 0, t: 0 });
-  const lastStrumTimeRef = useRef(0);
   const hoverNoteRef = useRef<{ idx: number; since: number; committed: number }>({ idx: -1, since: 0, committed: -1 });
 
   const scale = SCALE_PRESETS[scaleIndex];
@@ -107,7 +105,6 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
 
   // Live refs so the rAF camera loop always calls the latest handlers/state.
   const pluckRef = useRef(pluckString); useEffect(() => { pluckRef.current = pluckString; }, [pluckString]);
-  const strumRef = useRef(strum); useEffect(() => { strumRef.current = strum; }, [strum]);
   const selectChordRef = useRef(setChordIndex);
   const scaleLenRef = useRef(scale.chords.length); useEffect(() => { scaleLenRef.current = scale.chords.length; }, [scale.chords.length]);
 
@@ -154,26 +151,21 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
             lastHandStringRef.current = -1;
             activityRef.current = { x: cx, y: cy, mode: 'note', string: -1, mag, t: now, progress };
           } else {
-            // Strum zone: a quick vertical hand sweep strums the whole chord —
-            // the natural air-guitar motion (down = downstroke, up = upstroke).
+            // Strum zone: pluck ONLY the string the hand is over. Each string is
+            // independent — moving across sounds them one at a time (a sweep
+            // becomes a natural strum), and hovering one string plays just that one.
             hoverNoteRef.current.idx = -1; hoverNoteRef.current.committed = -1;
-            const prev = lastStrumYRef.current;
-            if (prev.t > 0) {
-              const dt = (now - prev.t) / 1000;
-              if (dt > 0) {
-                const vy = (cy - prev.y) / dt; // frac/sec, +down
-                if (Math.abs(vy) > 1.1 && now - lastStrumTimeRef.current > 260) {
-                  lastStrumTimeRef.current = now;
-                  strumRef.current(vy > 0 ? 'D' : 'U');
-                }
-              }
+            const frac = (cx - STRINGS_LEFT) / STRINGS_SPAN;
+            const s = Math.max(0, Math.min(5, Math.round(frac * 5)));
+            if (s !== lastHandStringRef.current && now - perStringLastRef.current[s] > 90) {
+              perStringLastRef.current[s] = now;
+              pluckRef.current(s);
             }
-            lastStrumYRef.current = { y: cy, t: now };
-            activityRef.current = { x: cx, y: cy, mode: 'strum', string: -1, mag, t: now, progress: 0 };
+            lastHandStringRef.current = s;
+            activityRef.current = { x: cx, y: cy, mode: 'strum', string: s, mag, t: now, progress: 0 };
           }
         } else {
           lastHandStringRef.current = -1;
-          lastStrumYRef.current = { y: 0, t: 0 };
         }
       }
     }
@@ -371,7 +363,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
                 <><Camera className="w-9 h-9 text-amber-500 animate-pulse" /><p className="text-amber-100 font-bold text-lg">Requesting camera…</p></>
               ) : (
                 <><Sparkles className="w-10 h-10 text-amber-400" /><p className="text-amber-100 font-black text-xl font-display">Play in the air</p>
-                  <p className="text-amber-500/80 text-sm max-w-sm">Enable the camera to see yourself and play with your hands: point &amp; hold on a chord up top to pick it, then sweep your hand up/down below to strum. Or just tap the strings.</p>
+                  <p className="text-amber-500/80 text-sm max-w-sm">Enable the camera to see yourself and play with your hands: point &amp; hold on a chord up top to pick it, then move your hand across the strings below to play them. Or just tap.</p>
                   <button onClick={startCamera} className="mt-1 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white text-sm font-bold shadow-lg">Enable Camera</button></>
               )}
             </div>
@@ -380,7 +372,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
 
         {cameraOn && !handInFrame && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 bg-black/55 text-amber-200 text-[11px] px-4 py-2 rounded-full border border-amber-900/40 pointer-events-none text-center backdrop-blur-sm">
-            Point &amp; hold a chord up top · sweep up/down below to strum
+            Point &amp; hold a chord up top · move your hand across the strings below to play
           </div>
         )}
       </div>
@@ -393,7 +385,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         </div>
         <div className="flex flex-col items-center gap-0.5 py-2 text-center">
           <p className="flex items-center gap-1.5 text-[10px] text-emerald-400/80"><ShieldCheck className="w-3 h-3" /> Camera stays on your device. No video uploaded.</p>
-          <p className="flex items-center gap-1.5 text-[10px] text-amber-600/70"><Hand className="w-3 h-3" /> Point &amp; hold to pick a chord · sweep up/down to strum · or tap</p>
+          <p className="flex items-center gap-1.5 text-[10px] text-amber-600/70"><Hand className="w-3 h-3" /> Point &amp; hold to pick a chord · move across the strings to play · or tap</p>
         </div>
       </div>
     </div>
