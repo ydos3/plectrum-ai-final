@@ -4,6 +4,7 @@ import { getChordFingering } from '../services/chordService';
 import { playStrum, playNote, resumeAudio, stopAllAudio, setResonance, getResonance } from '../services/audioService';
 import { ParticleField } from '../services/particleField';
 import { stringIndexFromX, chordIndexFromX, resolvePluckNote } from '../services/airStrumDetector';
+import { createHandTracker, HandTracker } from '../services/handTracking';
 
 interface AirStrumProps {
   onBack?: () => void;
@@ -56,6 +57,11 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   // for a moment so holding a finger on a chord selects reliably.
   const lastSeenRef = useRef<{ x: number; y: number; t: number }>({ x: 0.5, y: 0.5, t: 0 });
   const hoverNoteRef = useRef<{ idx: number; since: number; committed: number }>({ idx: -1, since: 0, committed: -1 });
+  // MediaPipe hand tracking (precise, smooth) — with motion-diff as fallback.
+  const trackerRef = useRef<HandTracker | null>(null);
+  const smoothRef = useRef<{ x: number; y: number } | null>(null); // EMA of the strum fingertip
+  const lastStrumXRef = useRef<number | null>(null);
+  const [handTrackingOn, setHandTrackingOn] = useState(false);
 
   const scale = SCALE_PRESETS[scaleIndex];
   const currentChordName = scale.chords[Math.min(chordIndex, scale.chords.length - 1)];
@@ -121,6 +127,60 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   // ─── Camera + gesture processing ─────────────────────────────────────────────
   const processFrame = useCallback(() => {
     const video = videoRef.current;
+    const now = performance.now();
+
+    // ── Preferred path: precise MediaPipe hand landmarks (smooth, hand-only) ──
+    if (trackerRef.current && video && video.readyState >= 2) {
+      const hands = trackerRef.current.detect(video, now);
+      if (hands.length === 0) {
+        lastHandStringRef.current = -1;
+        hoverNoteRef.current.committed = -1;
+        smoothRef.current = null;
+        lastStrumXRef.current = null;
+        activityRef.current = { x: 0.5, y: 0.5, mode: null, string: -1, mag: 0, t: now, progress: 0 };
+      } else {
+        // Upper hand picks chords; lower hand strums (matches real air-guitar).
+        const noteHand = hands.find(hd => hd.y < NOTE_ZONE_TOP);
+        const strumHand = hands.find(hd => hd.y >= NOTE_ZONE_TOP);
+
+        if (noteHand) {
+          const idx = chordIndexFromX(noteHand.x, scaleLenRef.current);
+          const hv = hoverNoteRef.current;
+          if (idx !== hv.idx) { hv.idx = idx; hv.since = now; }
+          const progress = Math.min(1, (now - hv.since) / NOTE_SELECT_DWELL);
+          if (progress >= 1 && hv.committed !== idx) { hv.committed = idx; selectChordRef.current(idx); }
+          activityRef.current = { x: noteHand.x, y: noteHand.y, mode: 'note', string: -1, mag: 1, t: now, progress };
+        } else {
+          hoverNoteRef.current.idx = -1;
+          hoverNoteRef.current.committed = -1;
+        }
+
+        if (strumHand) {
+          // Smooth the fingertip (EMA) and only pluck when the hand is actually
+          // MOVING horizontally across a string — i.e. only on hand movement.
+          const prev = smoothRef.current;
+          const sx = prev ? prev.x + (strumHand.x - prev.x) * 0.5 : strumHand.x;
+          const sy = prev ? prev.y + (strumHand.y - prev.y) * 0.5 : strumHand.y;
+          smoothRef.current = { x: sx, y: sy };
+          const moved = lastStrumXRef.current === null ? 0 : Math.abs(sx - lastStrumXRef.current);
+          const s = stringIndexFromX(sx, STRINGS_LEFT, STRINGS_SPAN, 6);
+          if (s !== lastHandStringRef.current && moved > 0.012 && now - perStringLastRef.current[s] > 45) {
+            perStringLastRef.current[s] = now;
+            pluckRef.current(s);
+          }
+          lastHandStringRef.current = s;
+          lastStrumXRef.current = sx;
+          if (!noteHand) activityRef.current = { x: sx, y: sy, mode: 'strum', string: s, mag: 1, t: now, progress: 0 };
+        } else {
+          lastStrumXRef.current = null;
+          smoothRef.current = null;
+        }
+      }
+      rafRef.current = requestAnimationFrame(processFrame);
+      return;
+    }
+
+    // ── Fallback path: coarse whole-frame motion detection ──
     const canvas = procCanvasRef.current;
     if (video && canvas && video.readyState >= 2) {
       const w = canvas.width, h = canvas.height;
@@ -195,8 +255,12 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     if (videoRef.current) videoRef.current.srcObject = null;
+    if (trackerRef.current) { trackerRef.current.close(); trackerRef.current = null; }
     prevLumaRef.current = null;
     lastHandStringRef.current = -1;
+    smoothRef.current = null;
+    lastStrumXRef.current = null;
+    setHandTrackingOn(false);
     setHandInFrame(false); setHoverNote(-1); setPlayingString(-1);
   }, []);
 
@@ -210,6 +274,14 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
       resumeAudio();
       setCameraState('active');
       rafRef.current = requestAnimationFrame(processFrame);
+      // Load precise hand tracking in the background; the motion fallback runs
+      // until (and if) it's ready. If it never loads, the fallback stays.
+      createHandTracker().then(tracker => {
+        if (!tracker) return;
+        if (!streamRef.current) { tracker.close(); return; } // camera already stopped
+        trackerRef.current = tracker;
+        setHandTrackingOn(true);
+      }).catch(() => { /* keep fallback */ });
     } catch (err: any) {
       if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) setCameraState('denied');
       else setCameraState('error');
@@ -322,9 +394,18 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
             })}
           </div>
           {cameraOn && (
-            <p className="text-center text-[10px] text-violet-300/80 mt-1">Point &amp; hold on a chord (up here) to pick it</p>
+            <p className="text-center text-[10px] text-violet-300/80 mt-1">
+              {handTrackingOn ? 'Point at a chord with your fretting hand to pick it' : 'Point & hold on a chord (up here) to pick it'}
+            </p>
           )}
         </div>
+
+        {/* Precise hand-tracking indicator */}
+        {cameraOn && handTrackingOn && (
+          <div className="absolute top-2 left-2 z-30 flex items-center gap-1.5 bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Hand tracking
+          </div>
+        )}
 
         {/* Strum hit zone (lower) */}
         <div
