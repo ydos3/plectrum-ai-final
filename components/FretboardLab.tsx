@@ -44,14 +44,25 @@ const PRESET_CHANNA = {
     speed: 1.4
 };
 
+// Remember whatever the user last had in the Lab so it isn't reset to the
+// default preset on every open. Session-scoped (per active session).
+const LAB_STATE_KEY = 'plectrum_lab_state_v1';
+type LabState = { inputText: string; inputMode: InputMode; strumPattern: string; capoPosition: number; playbackSpeed: number };
+const readLabState = (): LabState | null => {
+  try { const s = sessionStorage.getItem(LAB_STATE_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
+};
+
 const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
+  // Restore the last-used Lab state; only fall back to the default preset the
+  // first time (nothing saved yet).
+  const savedLab = useRef<LabState | null>(readLabState());
   const [handedness, setHandedness] = useState<Handedness>('Right');
-  const [inputMode, setInputMode] = useState<InputMode>('FINGERSTYLE');
-  const [inputText, setInputText] = useState(PRESET_CHANNA.text);
-  const [strumPattern, setStrumPattern] = useState('');
+  const [inputMode, setInputMode] = useState<InputMode>(savedLab.current?.inputMode ?? 'FINGERSTYLE');
+  const [inputText, setInputText] = useState(savedLab.current?.inputText ?? PRESET_CHANNA.text);
+  const [strumPattern, setStrumPattern] = useState(savedLab.current?.strumPattern ?? '');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(PRESET_CHANNA.speed);
-  const [capoPosition, setCapoPosition] = useState(PRESET_CHANNA.capo);
+  const [playbackSpeed, setPlaybackSpeed] = useState(savedLab.current?.playbackSpeed ?? PRESET_CHANNA.speed);
+  const [capoPosition, setCapoPosition] = useState(savedLab.current?.capoPosition ?? PRESET_CHANNA.capo);
 
   const [activeNotes, setActiveNotes] = useState<{string: number, fret: number}[]>([]);
   
@@ -107,11 +118,22 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
 
   useEffect(() => {
       if (initialSong) {
+          // Opening a specific song from the library always loads that song.
           loadSongIntoLab(initialSong);
-      } else {
+      } else if (!savedLab.current) {
+          // First-ever open with nothing saved → start on the default preset.
           loadPreset(PRESET_CHANNA);
       }
+      // Otherwise keep whatever the user last had (restored from savedLab).
   }, [initialSong]);
+
+  // Persist the Lab state so it survives re-mounts / navigation instead of
+  // snapping back to the hardcoded preset.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(LAB_STATE_KEY, JSON.stringify({ inputText, inputMode, strumPattern, capoPosition, playbackSpeed }));
+    } catch { /* storage may be unavailable */ }
+  }, [inputText, inputMode, strumPattern, capoPosition, playbackSpeed]);
 
   // Cleanup on unmount
   useEffect(() => {
