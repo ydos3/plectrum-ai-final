@@ -1556,8 +1556,8 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                data-video-popup
                className={`bg-black/75 backdrop-blur-xl flex flex-col border border-white/10 shadow-2xl overflow-hidden ${
                  videoDocked
-                   ? 'order-3 h-full shrink-0 rounded-none'
-                   : `absolute z-40 rounded-2xl max-w-[calc(100vw-1.5rem)] animate-in fade-in duration-200 ${videoExpanded ? 'w-[min(92vw,440px)]' : 'w-[min(72vw,260px)]'} ${videoPos ? '' : 'bottom-4 right-4'}`
+                   ? 'order-3 h-full shrink-0 rounded-none pt-20 md:pt-24'
+                   : `absolute z-40 rounded-2xl max-w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-7rem)] animate-in fade-in duration-200 ${videoExpanded ? 'w-[min(92vw,440px)]' : 'w-[min(72vw,260px)]'} ${videoPos ? '' : 'bottom-4 right-4'}`
                }`}
                style={
                  videoDocked
@@ -1615,7 +1615,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                      )}
                  </div>
 
-                 <div className={`p-4 md:p-5 bg-black/30 flex-col gap-4 overflow-y-auto backdrop-blur-lg ${videoDocked ? 'flex-1 min-h-0' : 'max-h-[46vh]'} ${videoExpanded ? 'flex' : 'hidden'}`}>
+                 <div className={`p-4 md:p-5 bg-black/30 flex-col gap-4 overflow-y-auto backdrop-blur-lg flex-1 min-h-0 ${videoExpanded ? 'flex' : 'hidden'}`}>
                       <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
                           <div className="flex items-center justify-between gap-3">
                               <div className="min-w-0">
