@@ -61,6 +61,9 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const trackerRef = useRef<HandTracker | null>(null);
   const smoothRef = useRef<{ x: number; y: number } | null>(null); // EMA of the strum fingertip
   const lastStrumXRef = useRef<number | null>(null);
+  const lastStrumSampleRef = useRef<{ x: number; t: number } | null>(null); // for velocity gating
+  const noteSmoothXRef = useRef<number | null>(null); // EMA of the chord-picking hand
+  const lastInferRef = useRef(0); // throttle heavy inference (mobile-friendly)
   const [handTrackingOn, setHandTrackingOn] = useState(false);
 
   const scale = SCALE_PRESETS[scaleIndex];
@@ -129,6 +132,14 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     const video = videoRef.current;
     const now = performance.now();
 
+    // Throttle the heavy detection to ~30fps regardless of the 60fps rAF, so it
+    // stays smooth on phones. (Visuals keep running at 60fps in ParticleField.)
+    if (now - lastInferRef.current < 33) {
+      rafRef.current = requestAnimationFrame(processFrame);
+      return;
+    }
+    lastInferRef.current = now;
+
     // ── Preferred path: precise MediaPipe hand landmarks (smooth, hand-only) ──
     if (trackerRef.current && video && video.readyState >= 2) {
       const hands = trackerRef.current.detect(video, now);
@@ -144,27 +155,39 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         const strumHand = hands.find(hd => hd.y >= NOTE_ZONE_TOP);
 
         if (noteHand) {
-          const idx = chordIndexFromX(noteHand.x, scaleLenRef.current);
+          // Smooth the chord-picking hand so jitter near a chip boundary doesn't
+          // flip the selection.
+          const nx = noteSmoothXRef.current === null ? noteHand.x : noteSmoothXRef.current + (noteHand.x - noteSmoothXRef.current) * 0.35;
+          noteSmoothXRef.current = nx;
+          const idx = chordIndexFromX(nx, scaleLenRef.current);
           const hv = hoverNoteRef.current;
           if (idx !== hv.idx) { hv.idx = idx; hv.since = now; }
           const progress = Math.min(1, (now - hv.since) / NOTE_SELECT_DWELL);
           if (progress >= 1 && hv.committed !== idx) { hv.committed = idx; selectChordRef.current(idx); }
-          activityRef.current = { x: noteHand.x, y: noteHand.y, mode: 'note', string: -1, mag: 1, t: now, progress };
+          activityRef.current = { x: nx, y: noteHand.y, mode: 'note', string: -1, mag: 1, t: now, progress };
         } else {
           hoverNoteRef.current.idx = -1;
           hoverNoteRef.current.committed = -1;
+          noteSmoothXRef.current = null;
         }
 
         if (strumHand) {
-          // Smooth the fingertip (EMA) and only pluck when the hand is actually
-          // MOVING horizontally across a string — i.e. only on hand movement.
+          // Heavier EMA smoothing to kill landmark jitter, then only pluck when
+          // the hand is genuinely MOVING across a string — gated by velocity, not
+          // just crossing a boundary. This stops false notes from a still hand.
           const prev = smoothRef.current;
-          const sx = prev ? prev.x + (strumHand.x - prev.x) * 0.5 : strumHand.x;
-          const sy = prev ? prev.y + (strumHand.y - prev.y) * 0.5 : strumHand.y;
+          const sx = prev ? prev.x + (strumHand.x - prev.x) * 0.35 : strumHand.x;
+          const sy = prev ? prev.y + (strumHand.y - prev.y) * 0.35 : strumHand.y;
           smoothRef.current = { x: sx, y: sy };
-          const moved = lastStrumXRef.current === null ? 0 : Math.abs(sx - lastStrumXRef.current);
+
+          const sample = lastStrumSampleRef.current;
+          const dt = sample ? Math.max(0.001, (now - sample.t) / 1000) : 0;
+          const vx = sample ? Math.abs(sx - sample.x) / dt : 0; // normalized units / sec
+          lastStrumSampleRef.current = { x: sx, t: now };
+
           const s = stringIndexFromX(sx, STRINGS_LEFT, STRINGS_SPAN, 6);
-          if (s !== lastHandStringRef.current && moved > 0.012 && now - perStringLastRef.current[s] > 45) {
+          const MOVING = vx > 0.55;                       // real strum motion
+          if (s !== lastHandStringRef.current && MOVING && now - perStringLastRef.current[s] > 110) {
             perStringLastRef.current[s] = now;
             pluckRef.current(s);
           }
@@ -173,6 +196,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
           if (!noteHand) activityRef.current = { x: sx, y: sy, mode: 'strum', string: s, mag: 1, t: now, progress: 0 };
         } else {
           lastStrumXRef.current = null;
+          lastStrumSampleRef.current = null;
           smoothRef.current = null;
         }
       }
@@ -268,7 +292,9 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     if (!supportsCamera) { setCameraState('unsupported'); return; }
     setCameraState('requesting');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      // Lower capture resolution → far cheaper hand inference on phones. The
+      // visual is object-cover so it still looks full-screen.
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 30 } }, audio: false });
       streamRef.current = stream;
       if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
       resumeAudio();
