@@ -3,7 +3,7 @@ import { ArrowLeft, Camera, CameraOff, Hand, Sparkles, ShieldCheck, ArrowDown, A
 import { getChordFingering } from '../services/chordService';
 import { playStrum, playNote, resumeAudio, stopAllAudio, setResonance, getResonance } from '../services/audioService';
 import { ParticleField } from '../services/particleField';
-import { stringIndexFromX, chordIndexFromX } from '../services/airStrumDetector';
+import { stringIndexFromX, chordIndexFromX, resolvePluckNote } from '../services/airStrumDetector';
 
 interface AirStrumProps {
   onBack?: () => void;
@@ -91,9 +91,13 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     if (stringIdx < 0 || stringIdx > 5) return;
     resumeAudio();
     if (fingering) {
-      const fret = fingering.frets[stringIdx];
-      if (fret >= 0) playNote(stringIdx, fret, 'normal', 0);
+      // Many chords mute the low E / A (fret -1). In air strum the user hits
+      // each string position and expects a sound, so a muted string falls back
+      // to the nearest SOUNDING chord tone — always audible and always in key.
+      const note = resolvePluckNote(fingering.frets, stringIdx);
+      if (note) playNote(note.playIdx, note.fret, 'normal', 0);
     }
+    // Vibrate the string the hand actually hit (visual stays on that string).
     fieldRef.current?.pluck(stringIdx, 1);
   }, [fingering]);
 

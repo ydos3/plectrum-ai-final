@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { StrumDetector, stringIndexFromX, chordIndexFromX } from '../services/airStrumDetector.ts';
+import { StrumDetector, stringIndexFromX, chordIndexFromX, resolvePluckNote } from '../services/airStrumDetector.ts';
 import { parseFingerstyleTab } from '../services/tabParser.ts';
 
 // ─── Hand-position → string / chord mapping ──────────────────────────────────
@@ -19,6 +19,21 @@ import { parseFingerstyleTab } from '../services/tabParser.ts';
   assert.equal(chordIndexFromX(0.0, 6), 0, 'first chord');
   assert.equal(chordIndexFromX(0.6, 6), 3, 'fourth chord (G in Bollywood set)');
   assert.equal(chordIndexFromX(1.0, 6), 5, 'last chord');
+}
+
+// ─── Muted string → nearest sounding chord tone (every string must sound) ────
+{
+  // Am = [-1, 0, 2, 2, 1, 0]: low E is muted → falls back to open A (idx 1).
+  const am = [-1, 0, 2, 2, 1, 0];
+  assert.deepEqual(resolvePluckNote(am, 0), { playIdx: 1, fret: 0 }, 'Am low-E → open A');
+  assert.deepEqual(resolvePluckNote(am, 1), { playIdx: 1, fret: 0 }, 'Am A plays itself');
+
+  // D = [-1, -1, 0, 2, 3, 2]: both low E and A muted → nearest sounding is D (idx 2).
+  const d = [-1, -1, 0, 2, 3, 2];
+  assert.deepEqual(resolvePluckNote(d, 0), { playIdx: 2, fret: 0 }, 'D low-E → D string');
+  assert.deepEqual(resolvePluckNote(d, 1), { playIdx: 2, fret: 0 }, 'D A → D string');
+  // Every string index now resolves to an audible note.
+  for (let i = 0; i < 6; i++) assert.ok(resolvePluckNote(d, i) !== null, `D string ${i} sounds`);
 }
 
 // ─── Strum detector ────────────────────────────────────────────────────────

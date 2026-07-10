@@ -24,6 +24,29 @@ export const stringIndexFromX = (cx: number, left = 0.10, span = 0.80, count = 6
 export const chordIndexFromX = (cx: number, count: number): number =>
   clamp(Math.round(clamp(cx, 0, 1) * (count - 1)), 0, count - 1);
 
+/**
+ * Resolve which note to sound when a string is plucked in Air Strum. Many chords
+ * mute the low E / A (fret -1); a plucked muted string falls back to the nearest
+ * SOUNDING chord tone so every string always makes an in-key sound.
+ * Returns { playIdx, fret } or null if the chord has no sounding string.
+ */
+export const resolvePluckNote = (
+  frets: number[],
+  stringIdx: number,
+): { playIdx: number; fret: number } | null => {
+  const own = frets[stringIdx];
+  if (typeof own === 'number' && own >= 0) return { playIdx: stringIdx, fret: own };
+  let bestDist = Infinity;
+  let result: { playIdx: number; fret: number } | null = null;
+  for (let j = 0; j < frets.length; j++) {
+    if (frets[j] >= 0) {
+      const d = Math.abs(j - stringIdx);
+      if (d < bestDist) { bestDist = d; result = { playIdx: j, fret: frets[j] }; }
+    }
+  }
+  return result;
+};
+
 export interface MotionSample {
   /** Horizontal centroid of motion, normalized 0 (left) .. 1 (right). */
   centroidX: number;
