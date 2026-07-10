@@ -178,6 +178,53 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const persistedState = useRef<PersistedTeleprompterState>(readTeleprompterState());
   const [karaokeEnabled, setKaraokeEnabled] = useState(() => Boolean(persistedState.current.karaokeEnabled));
   const [videoExpanded, setVideoExpanded] = useState(false);
+  // Draggable floating popup position (small mode) + adjustable dock width (expanded).
+  const [videoPos, setVideoPos] = useState<{ x: number; y: number } | null>(null);
+  const [videoSplit, setVideoSplit] = useState(0.36); // fraction of width the docked video takes
+  const videoDragRef = useRef<{ active: boolean; offX: number; offY: number }>({ active: false, offX: 0, offY: 0 });
+  const dockDragRef = useRef(false);
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = () => setIsDesktop(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Drag the floating popup anywhere (small mode only).
+  const handleVideoDragStart = useCallback((e: React.PointerEvent) => {
+    // Don't start a drag when tapping one of the header buttons.
+    if ((e.target as HTMLElement).closest('button')) return;
+    const el = (e.currentTarget as HTMLElement).closest('[data-video-popup]') as HTMLElement | null;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    videoDragRef.current = { active: true, offX: e.clientX - rect.left, offY: e.clientY - rect.top };
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  }, []);
+  const handleVideoDragMove = useCallback((e: React.PointerEvent) => {
+    if (!videoDragRef.current.active) return;
+    const el = (e.currentTarget as HTMLElement).closest('[data-video-popup]') as HTMLElement | null;
+    const w = el?.offsetWidth ?? 244;
+    const h = el?.offsetHeight ?? 160;
+    const x = Math.min(window.innerWidth - Math.min(w, 80), Math.max(0, e.clientX - videoDragRef.current.offX));
+    const y = Math.min(window.innerHeight - 56, Math.max(56, e.clientY - videoDragRef.current.offY));
+    setVideoPos({ x, y });
+  }, []);
+  const handleVideoDragEnd = useCallback(() => { videoDragRef.current.active = false; }, []);
+
+  // Drag the divider to adjust the docked video width (expanded, desktop).
+  const handleDockDown = useCallback((e: React.PointerEvent) => {
+    dockDragRef.current = true;
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  }, []);
+  const handleDockMove = useCallback((e: React.PointerEvent) => {
+    if (!dockDragRef.current || !splitContainerRef.current) return;
+    const rect = splitContainerRef.current.getBoundingClientRect();
+    const ratio = 1 - (e.clientX - rect.left) / rect.width; // video sits on the right
+    setVideoSplit(Math.min(0.6, Math.max(0.24, ratio)));
+  }, []);
+  const handleDockUp = useCallback(() => { dockDragRef.current = false; }, []);
   const [playbackSpeed, setPlaybackSpeed] = useState(() => clampNumber(persistedState.current.playbackSpeed, 1, MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED));
   const [youtubePlaybackRate, setYoutubePlaybackRate] = useState(() => clampNumber(persistedState.current.youtubePlaybackRate, 1, 0.25, MAX_PLAYBACK_SPEED));
   
@@ -1388,6 +1435,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const footerSpeed = playbackSpeed;
   const updateFooterSpeed = updatePlaybackSpeed;
   const footerSpeedLabel = 'Scroll';
+  // Expanded + desktop → dock the video beside the lyrics (adjustable split, no
+  // overlap). Otherwise it's a small draggable floating popup.
+  const videoDocked = karaokeEnabled && videoExpanded && isDesktop;
   const activeTranscriptLine = activeLineIndex >= 0
     ? parsedLines.current[activeLineIndex]?.lyricsOnly || parsedLines.current[activeLineIndex]?.text || ''
     : '';
@@ -1412,9 +1462,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         <div className={`absolute bottom-0 left-1/4 w-[600px] h-[300px] blur-[120px] rounded-full ${isAiGenerated ? 'bg-fuchsia-900/10' : 'bg-indigo-500/10'}`}></div>
         <div className="absolute inset-0 bg-black/25"></div>
       </div>
-      {/* Header - Now an overlay that appears on hover */}
-      <div className={`absolute top-0 left-0 right-0 h-20 md:h-24 flex items-center justify-between px-3 md:px-8 z-50 shrink-0 border-b shadow-[0_4px_30px_rgba(0,0,0,0.3)] w-full opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 ${
-        isAiGenerated ? 'bg-[#1a050f]/90 border-rose-900/20' : 'bg-[#0f172a]/90 border-white/[0.05]'
+      {/* Header - translucent overlay so it never hides the lyrics behind it */}
+      <div className={`absolute top-0 left-0 right-0 h-20 md:h-24 flex items-center justify-between px-3 md:px-8 z-50 shrink-0 w-full opacity-100 md:opacity-30 md:hover:opacity-100 transition-opacity duration-300 backdrop-blur-sm bg-gradient-to-b ${
+        isAiGenerated ? 'from-[#1a050f]/55 to-transparent' : 'from-[#0f172a]/55 to-transparent'
       }`}>
         <div className="flex items-center gap-3 flex-1 min-w-0">
              <button onClick={onClose} className="p-2.5 bg-white/[0.04] hover:bg-white/[0.08] text-white rounded-xl transition-all backdrop-blur-lg shrink-0 active:scale-95 border border-white/[0.06]">
@@ -1456,9 +1506,15 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         </div>
       </div>
 
-      {/* Lyrics take the whole page; the video (if on) floats as a small popup. */}
-      <div className="flex-1 min-h-0 overflow-hidden relative">
-         <div className="w-full h-full min-h-0 relative">
+      {/* Lyrics take the page; the video is a draggable popup, or an adjustable
+          side-dock when expanded on desktop (no overlap). */}
+      <div
+        ref={splitContainerRef}
+        onPointerMove={videoDocked ? handleDockMove : undefined}
+        onPointerUp={videoDocked ? handleDockUp : undefined}
+        className={`flex-1 min-h-0 overflow-hidden relative ${videoDocked ? 'flex flex-row' : ''}`}
+      >
+         <div className={videoDocked ? 'order-1 flex-1 min-w-0 min-h-0 relative' : 'w-full h-full min-h-0 relative'}>
              <div
                ref={scrollContainerRef}
                onWheel={syncClockToManualScroll}
@@ -1485,11 +1541,36 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-black to-transparent pointer-events-none z-10"></div>
          </div>
 
+         {videoDocked && (
+           <div
+             onPointerDown={handleDockDown}
+             className="order-2 w-2 shrink-0 cursor-col-resize bg-white/[0.04] hover:bg-white/[0.10] active:bg-indigo-500/30 transition-colors flex items-center justify-center z-40"
+             style={{ touchAction: 'none' }}
+           >
+             <div className="w-0.5 h-12 rounded-full bg-white/25" />
+           </div>
+         )}
+
          {karaokeEnabled && (
              <div
-               className={`absolute z-40 bottom-4 right-4 max-w-[calc(100vw-2rem)] bg-black/75 backdrop-blur-xl flex flex-col border border-white/10 shadow-2xl rounded-2xl overflow-hidden animate-in slide-in-from-bottom-4 fade-in duration-300 ${videoExpanded ? 'w-[min(92vw,440px)]' : 'w-[min(72vw,244px)]'}`}
+               data-video-popup
+               className={`bg-black/75 backdrop-blur-xl flex flex-col border border-white/10 shadow-2xl overflow-hidden ${
+                 videoDocked
+                   ? 'order-3 h-full shrink-0 rounded-none'
+                   : `absolute z-40 rounded-2xl max-w-[calc(100vw-1.5rem)] animate-in fade-in duration-200 ${videoExpanded ? 'w-[min(92vw,440px)]' : 'w-[min(72vw,260px)]'} ${videoPos ? '' : 'bottom-4 right-4'}`
+               }`}
+               style={
+                 videoDocked
+                   ? { width: `${videoSplit * 100}%` }
+                   : (videoPos ? { left: videoPos.x, top: videoPos.y } : undefined)
+               }
              >
-                 <div className="p-2 md:p-2.5 bg-white/[0.04] border-b border-white/[0.06] flex items-center justify-between backdrop-blur-lg">
+                 <div
+                   onPointerDown={!videoDocked ? handleVideoDragStart : undefined}
+                   onPointerMove={!videoDocked ? handleVideoDragMove : undefined}
+                   onPointerUp={!videoDocked ? handleVideoDragEnd : undefined}
+                   className={`p-2 md:p-2.5 bg-white/[0.04] border-b border-white/[0.06] flex items-center justify-between backdrop-blur-lg ${!videoDocked ? 'cursor-move touch-none select-none' : ''}`}
+                 >
                      <div className="flex items-center gap-1.5 text-indigo-300 font-bold uppercase tracking-widest text-[10px] truncate">
                          <Youtube className="w-3.5 h-3.5 shrink-0" />
                          <span className="truncate">{sourceLabel}</span>
@@ -1534,7 +1615,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                      )}
                  </div>
 
-                 <div className={`p-4 md:p-5 bg-black/30 flex-col gap-4 overflow-y-auto backdrop-blur-lg max-h-[46vh] ${videoExpanded ? 'flex' : 'hidden'}`}>
+                 <div className={`p-4 md:p-5 bg-black/30 flex-col gap-4 overflow-y-auto backdrop-blur-lg ${videoDocked ? 'flex-1 min-h-0' : 'max-h-[46vh]'} ${videoExpanded ? 'flex' : 'hidden'}`}>
                       <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
                           <div className="flex items-center justify-between gap-3">
                               <div className="min-w-0">
@@ -1619,9 +1700,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         </button>
       )}
 
-      {/* Playback Footer - Now an overlay that appears on hover */}
-      <div className={`absolute bottom-0 left-0 right-0 h-20 md:h-24 pb-safe border-t flex items-center justify-start md:justify-center gap-2 md:gap-8 z-50 shrink-0 shadow-[0_-5px_30px_rgba(0,0,0,0.3)] opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 overflow-x-auto px-2 md:px-0 ${
-        isAiGenerated ? 'bg-[#1a050f]/90 border-rose-900/20' : 'bg-[#0f172a]/90 border-white/[0.05]'
+      {/* Playback Footer - translucent overlay so it never hides the lyrics */}
+      <div className={`absolute bottom-0 left-0 right-0 h-20 md:h-24 pb-safe flex items-center justify-start md:justify-center gap-2 md:gap-8 z-50 shrink-0 opacity-100 md:opacity-40 md:hover:opacity-100 transition-opacity duration-300 overflow-x-auto px-2 md:px-0 backdrop-blur-sm bg-gradient-to-t ${
+        isAiGenerated ? 'from-[#1a050f]/55 to-transparent' : 'from-[#0f172a]/55 to-transparent'
       }`}>
              <div className="flex items-center gap-1 md:gap-2 px-1.5 md:px-4 border-r border-white/[0.06] pr-2 md:pr-6">
                  <button onClick={() => setFontSize(f => Math.max(16, f-2))} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
