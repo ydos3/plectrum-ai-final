@@ -806,10 +806,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
       if (!paused && karaokeEnabled && playerReady) {
         // ── KARAOKE: lyrics SYNC to the YouTube video clock ───────────────────
-        // The video is the master; lyrics track its position. The +/- speed
-        // fine-tunes the lyric pacing (teleprompter only — the video stays 1x).
-        const videoTimeSec = getEstimatedPlaybackTimeMs() / 1000;
-        const effTime = videoTimeSec * playbackSpeed;
+        // The video is the master; lyrics track its position. The sync offset
+        // (adjustable, incl. "Start lyrics here") handles videos that open with a
+        // spoken intro/dialogue before the vocals. The +/- speed fine-tunes tempo.
+        const videoTimeMs = getEstimatedPlaybackTimeMs();
+        const lyricSec = Math.max(0, videoTimeToLyricTimeMs(videoTimeMs, syncCorrection) / 1000);
+        const effTime = lyricSec * playbackSpeed;
         const timings = getLineTimings();
         const activeIdx = getActiveLineForTime(effTime, timings);
         if (activeIdx >= 0 && activeIdx !== activeLineIndexRef.current) {
@@ -860,7 +862,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     return () => {
       if (scrollTimerRef.current) cancelAnimationFrame(scrollTimerRef.current);
     };
-  }, [isPlaying, playbackSpeed, karaokeEnabled, playerReady, getEstimatedPlaybackTimeMs, getLineTimings, getActiveLineForTime, scrollToProgress]);
+  }, [isPlaying, playbackSpeed, karaokeEnabled, playerReady, syncCorrection, getEstimatedPlaybackTimeMs, getLineTimings, getActiveLineForTime, scrollToProgress]);
 
   // (Removed the "sync-while-paused" loop: it followed YouTube time and kept
   // scrolling the lyrics while paused. Pausing now cleanly stops the scroll.)
@@ -1171,6 +1173,21 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
     setSyncCorrection(resetSongSyncState());
     setCalibrationPoint(null);
     setSyncMessage('Sync reset');
+  };
+
+  // Align the FIRST lyric to the current video moment — press this the instant
+  // the singing starts, so videos that open with dialogue/intro line up.
+  const setStartToNow = () => {
+    if (!playerRef.current?.getCurrentTime) { setSyncMessage('Play the video first'); return; }
+    const videoTimeMs = syncPlaybackClockNow(isPlaying).mediaTimeMs;
+    const timings = getLineTimings();
+    const firstIdx = timings.findIndex(t => t >= 0);
+    const firstLyricMs = firstIdx >= 0 ? timings[firstIdx] * 1000 : 0;
+    setSyncCorrection(correction => ({
+      ...correction,
+      offsetMs: Math.round(firstLyricMs - correction.scale * videoTimeMs),
+    }));
+    setSyncMessage('Lyrics start set to now');
   };
 
   const setCurrentLineToVideoTime = () => {
@@ -1554,10 +1571,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
          {karaokeEnabled && (
              <div
                data-video-popup
-               className={`bg-black/75 backdrop-blur-xl flex flex-col border border-white/10 shadow-2xl overflow-hidden ${
+               className={`bg-white/[0.07] backdrop-blur-2xl flex flex-col border border-white/15 ring-1 ring-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.55)] overflow-hidden ${
                  videoDocked
                    ? 'order-3 h-full shrink-0 rounded-none pt-20 md:pt-24'
-                   : `absolute z-40 rounded-2xl max-w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-7rem)] animate-in fade-in duration-200 ${videoExpanded ? 'w-[min(92vw,440px)]' : 'w-[min(72vw,260px)]'} ${videoPos ? '' : 'bottom-4 right-4'}`
+                   : `absolute z-40 rounded-3xl max-w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-7rem)] animate-in fade-in duration-200 ${videoExpanded ? 'w-[min(92vw,440px)]' : 'w-[min(72vw,260px)]'} ${videoPos ? '' : 'bottom-4 right-4'}`
                }`}
                style={
                  videoDocked
@@ -1569,7 +1586,7 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                    onPointerDown={!videoDocked ? handleVideoDragStart : undefined}
                    onPointerMove={!videoDocked ? handleVideoDragMove : undefined}
                    onPointerUp={!videoDocked ? handleVideoDragEnd : undefined}
-                   className={`p-2 md:p-2.5 bg-white/[0.04] border-b border-white/[0.06] flex items-center justify-between backdrop-blur-lg ${!videoDocked ? 'cursor-move touch-none select-none' : ''}`}
+                   className={`p-2 md:p-2.5 bg-white/[0.08] border-b border-white/[0.10] flex items-center justify-between backdrop-blur-xl ${!videoDocked ? 'cursor-move touch-none select-none' : ''}`}
                  >
                      <div className="flex items-center gap-1.5 text-indigo-300 font-bold uppercase tracking-widest text-[10px] truncate">
                          <Youtube className="w-3.5 h-3.5 shrink-0" />
@@ -1615,58 +1632,48 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
                      )}
                  </div>
 
-                 <div className={`p-4 md:p-5 bg-black/30 flex-col gap-4 overflow-y-auto backdrop-blur-lg flex-1 min-h-0 ${videoExpanded ? 'flex' : 'hidden'}`}>
-                      <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
+                 <div className={`p-4 md:p-5 bg-white/[0.02] flex-col gap-3 overflow-y-auto backdrop-blur-2xl flex-1 min-h-0 ${videoExpanded ? 'flex' : 'hidden'}`}>
+                      <div className="bg-white/[0.06] rounded-2xl p-3 border border-white/[0.12] backdrop-blur-xl">
                           <div className="flex items-center justify-between gap-3">
                               <div className="min-w-0">
-                                  <div className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Source Type</div>
+                                  <div className="text-[10px] text-gray-400 uppercase font-bold tracking-widest">Source Type</div>
                                   <div className="text-sm text-white font-bold truncate">{sourceLabel}</div>
                                   <div className="text-[10px] text-indigo-300/70 truncate">{sourceChannelName}</div>
                               </div>
-                              <button onClick={handleVideoError} className="px-3 py-2 bg-white/[0.04] hover:bg-white/[0.08] text-indigo-300 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-white/[0.06] shrink-0">
+                              <button onClick={handleVideoError} className="px-3 py-2 bg-white/[0.06] hover:bg-white/[0.12] text-indigo-200 rounded-xl text-[10px] font-bold uppercase tracking-wider border border-white/[0.12] shrink-0">
                                   Change
                               </button>
                           </div>
                       </div>
 
-                      <div className="bg-indigo-500/[0.06] rounded-xl p-3 border border-indigo-400/10">
+                      <div className="bg-indigo-500/[0.10] rounded-2xl p-3 border border-indigo-400/20 backdrop-blur-xl">
                           <div className="text-[10px] text-indigo-300/70 uppercase font-bold tracking-widest mb-1">Video-linked transcription</div>
                           <div className="text-sm text-white/85 leading-snug line-clamp-3">
                               {activeTranscriptLine || 'Press play to follow the current lyric line against the video clock.'}
                           </div>
                       </div>
 
-                      {/* Sync Controls */}
-                      <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06]">
+                      {/* Sync Controls — work for every song (offset applies to the
+                          estimated timing too, so dialogue-intro videos line up). */}
+                      <div className="bg-white/[0.06] rounded-2xl p-3 border border-white/[0.12] backdrop-blur-xl shadow-inner">
                           <div className="flex justify-between items-center mb-2">
-                              <label className="text-[10px] text-indigo-400/80 uppercase font-bold tracking-widest flex items-center gap-2"><Timer className="w-3 h-3" /> Sync</label>
-                              <span className="text-xs font-mono text-indigo-300/60">
-                                {syncCorrection.offsetMs >= 0 ? `+${syncCorrection.offsetMs}` : syncCorrection.offsetMs} ms
-                                {syncCorrection.scale !== 1 ? ` / ${syncCorrection.scale.toFixed(4)}x` : ''}
+                              <label className="text-[10px] text-indigo-300/90 uppercase font-bold tracking-widest flex items-center gap-2"><Timer className="w-3 h-3" /> Sync</label>
+                              <span className="text-xs font-mono text-indigo-200/70">
+                                {(syncCorrection.offsetMs / 1000).toFixed(1)}s
+                                {syncCorrection.scale !== 1 ? ` / ${syncCorrection.scale.toFixed(3)}x` : ''}
                               </span>
                           </div>
-                          {hasTimedLyrics ? (
-                            <>
-                              <div className="grid grid-cols-2 gap-2">
-                                  <button onClick={() => adjustLyricsEarlier(100)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.06]">Earlier 100</button>
-                                  <button onClick={() => adjustLyricsLater(100)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.06]">Later 100</button>
-                                  <button onClick={() => adjustLyricsEarlier(500)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.06]">Earlier 500</button>
-                                  <button onClick={() => adjustLyricsLater(500)} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.06]">Later 500</button>
-                              </div>
-                              <div className="flex gap-2 mt-2">
-                                  <button onClick={setCurrentLineToVideoTime} className="flex-1 px-2.5 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-indigo-500/30">Set Line</button>
-                                  <button onClick={resetSyncCorrection} className="px-2.5 py-2 bg-white/[0.04] hover:bg-indigo-500/20 rounded-lg text-[10px] font-bold text-indigo-200 uppercase tracking-wider transition-all border border-white/[0.06]">Reset</button>
-                              </div>
-                              {(syncMessage || calibrationPoint) && (
-                                <div className="mt-2 text-[10px] text-indigo-300/70 font-medium">
-                                  {syncMessage || 'First sync point ready'}
-                                </div>
-                              )}
-                            </>
-                          ) : (
-                            <div className="text-xs text-amber-200/70 leading-snug">
-                              Synced lyrics unavailable. Plain lyrics stay in Free Teleprompter mode.
-                            </div>
+                          <button onClick={setStartToNow} className="w-full mb-2 px-3 py-2.5 bg-gradient-to-r from-indigo-500/40 to-indigo-600/30 hover:from-indigo-500/60 hover:to-indigo-600/50 rounded-xl text-[11px] font-black text-white uppercase tracking-wider transition-all border border-indigo-400/40 shadow-lg">
+                              ▸ Start lyrics here
+                          </button>
+                          <p className="text-[9px] text-indigo-200/50 mb-2 leading-snug">Tap the moment the singing begins (skips spoken intros), then nudge:</p>
+                          <div className="grid grid-cols-2 gap-2">
+                              <button onClick={() => adjustLyricsLater(500)} className="px-2.5 py-2 bg-white/[0.06] hover:bg-indigo-500/25 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.10]">Lyrics later</button>
+                              <button onClick={() => adjustLyricsEarlier(500)} className="px-2.5 py-2 bg-white/[0.06] hover:bg-indigo-500/25 rounded-lg text-[10px] font-bold text-indigo-100 uppercase tracking-wider transition-all border border-white/[0.10]">Lyrics earlier</button>
+                          </div>
+                          <button onClick={resetSyncCorrection} className="w-full mt-2 px-2.5 py-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg text-[10px] font-bold text-gray-300 uppercase tracking-wider transition-all border border-white/[0.08]">Reset sync</button>
+                          {syncMessage && (
+                            <div className="mt-2 text-[10px] text-emerald-300/80 font-medium">{syncMessage}</div>
                           )}
                       </div>
 
