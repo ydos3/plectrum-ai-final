@@ -65,6 +65,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const noteSmoothXRef = useRef<number | null>(null); // EMA of the chord-picking hand
   const lastInferRef = useRef(0); // throttle heavy inference (mobile-friendly)
   const [handTrackingOn, setHandTrackingOn] = useState(false);
+  const [handTrackingLoading, setHandTrackingLoading] = useState(false);
 
   const scale = SCALE_PRESETS[scaleIndex];
   const currentChordName = scale.chords[Math.min(chordIndex, scale.chords.length - 1)];
@@ -93,6 +94,24 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
       window.removeEventListener('orientationchange', sync);
       field.destroy();
       fieldRef.current = null;
+    };
+  }, []);
+
+  // Preload the MediaPipe hand tracker the moment the page opens, so the ~model
+  // download overlaps with reading the intro / granting camera permission and
+  // the experience starts fast. Motion fallback covers the gap; tracker is reused
+  // across camera stop/start and closed on unmount.
+  useEffect(() => {
+    let cancelled = false;
+    setHandTrackingLoading(true);
+    createHandTracker().then(tracker => {
+      if (cancelled) { tracker?.close(); return; }
+      setHandTrackingLoading(false);
+      if (tracker) { trackerRef.current = tracker; setHandTrackingOn(true); }
+    }).catch(() => { if (!cancelled) setHandTrackingLoading(false); });
+    return () => {
+      cancelled = true;
+      if (trackerRef.current) { trackerRef.current.close(); trackerRef.current = null; }
     };
   }, []);
 
@@ -279,7 +298,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     if (videoRef.current) videoRef.current.srcObject = null;
-    if (trackerRef.current) { trackerRef.current.close(); trackerRef.current = null; }
+    // Keep the loaded hand tracker alive for instant restart; it's closed on unmount.
     prevLumaRef.current = null;
     lastHandStringRef.current = -1;
     smoothRef.current = null;
@@ -300,14 +319,8 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
       resumeAudio();
       setCameraState('active');
       rafRef.current = requestAnimationFrame(processFrame);
-      // Load precise hand tracking in the background; the motion fallback runs
-      // until (and if) it's ready. If it never loads, the fallback stays.
-      createHandTracker().then(tracker => {
-        if (!tracker) return;
-        if (!streamRef.current) { tracker.close(); return; } // camera already stopped
-        trackerRef.current = tracker;
-        setHandTrackingOn(true);
-      }).catch(() => { /* keep fallback */ });
+      // The hand tracker is preloaded on page open (see effect below); the motion
+      // fallback runs instantly until it's ready.
     } catch (err: any) {
       if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) setCameraState('denied');
       else setCameraState('error');
@@ -426,10 +439,11 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
           )}
         </div>
 
-        {/* Precise hand-tracking indicator */}
-        {cameraOn && handTrackingOn && (
-          <div className="absolute top-2 left-2 z-30 flex items-center gap-1.5 bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Hand tracking
+        {/* Precise hand-tracking indicator (loading → active) */}
+        {cameraOn && (handTrackingOn || handTrackingLoading) && (
+          <div className={`absolute top-2 left-2 z-30 flex items-center gap-1.5 border text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${handTrackingOn ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-300' : 'bg-amber-500/15 border-amber-400/30 text-amber-300'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${handTrackingOn ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            {handTrackingOn ? 'Hand tracking' : 'Warming up…'}
           </div>
         )}
 

@@ -2,13 +2,15 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import Layout from './components/Layout';
 import SongList from './components/SongList';
-import SongEditor from './components/SongEditor';
-import Teleprompter from './components/Teleprompter';
-import AIChat from './components/AIChat';
-import ImageAnalyzer from './components/ImageAnalyzer';
-import ChordTrainer from './components/ChordTrainer';
-import FretboardLab from './components/FretboardLab';
-import PracticeRoom from './components/PracticeRoom';
+// Heavy views are code-split so the initial load is small and first paint is
+// fast. Each loads on demand when its view is opened.
+const SongEditor = lazy(() => import('./components/SongEditor'));
+const Teleprompter = lazy(() => import('./components/Teleprompter'));
+const AIChat = lazy(() => import('./components/AIChat'));
+const ImageAnalyzer = lazy(() => import('./components/ImageAnalyzer'));
+const ChordTrainer = lazy(() => import('./components/ChordTrainer'));
+const FretboardLab = lazy(() => import('./components/FretboardLab'));
+const PracticeRoom = lazy(() => import('./components/PracticeRoom'));
 // Air Strum bundles a camera + motion loop; lazy-load so it never touches the
 // initial bundle or requests the camera on the homepage.
 const AirStrum = lazy(() => import('./components/AirStrum'));
@@ -505,26 +507,20 @@ const App: React.FC = () => {
                             onCreateNew={() => navigateTo('EDITOR', { clearEditorState: true })}
                         />
                     )}
-                    {currentView === 'EDITOR' && <SongEditor songToEdit={selectedSong} onSave={goBack} onCancel={goBack} initialContent={scannedContent} selectedLanguage={selectedLanguage} userSkillLevel={currentUser?.skillLevel} />}
-                    {currentView === 'TELEPROMPTER' && selectedSong && <Teleprompter song={selectedSong} onClose={goBack} />}
-                    {currentView === 'CHAT' && <AIChat onClose={goBack} />}
-                    {currentView === 'ANALYZER' && <ImageAnalyzer onCreateFromAnalysis={(c) => navigateTo('EDITOR', { scanned: c, clearEditorState: false })} onBack={goBack} />}
-                    {currentView === 'CHORD_TRAINER' && <ChordTrainer onBack={goBack} />}
-                    {currentView === 'FRETBOARD_LAB' && <FretboardLab initialSong={selectedSong} onBack={goBack} />}
-                    {currentView === 'AIR_STRUM' && (
-                        <Suspense fallback={<div className="h-full w-full flex items-center justify-center text-amber-500/70 text-sm">Loading Air Strum…</div>}>
-                            <AirStrum onBack={goBack} />
-                        </Suspense>
-                    )}
-                    {currentView === 'PRACTICE_ROOM' && (
-                        <>
-                            {selectedSong ? (
-                                <PracticeRoom isTourMode={showTour} onBack={goBack} initialSong={selectedSong} />
-                            ) : (
-                                <PracticeRoom isTourMode={showTour} initialSong={selectedSong} onBack={goBack} />
-                            )}
-                        </>
-                    )}
+                    <Suspense fallback={<div className="h-full w-full flex items-center justify-center text-amber-500/70 text-sm">Loading…</div>}>
+                        {currentView === 'EDITOR' && <SongEditor songToEdit={selectedSong} onSave={goBack} onCancel={goBack} initialContent={scannedContent} selectedLanguage={selectedLanguage} userSkillLevel={currentUser?.skillLevel} />}
+                        {currentView === 'TELEPROMPTER' && selectedSong && <Teleprompter song={selectedSong} onClose={goBack} />}
+                        {currentView === 'CHAT' && <AIChat onClose={goBack} />}
+                        {currentView === 'ANALYZER' && <ImageAnalyzer onCreateFromAnalysis={(c) => navigateTo('EDITOR', { scanned: c, clearEditorState: false })} onBack={goBack} />}
+                        {currentView === 'CHORD_TRAINER' && <ChordTrainer onBack={goBack} />}
+                        {currentView === 'FRETBOARD_LAB' && <FretboardLab initialSong={selectedSong} onBack={goBack} />}
+                        {currentView === 'AIR_STRUM' && <AirStrum onBack={goBack} />}
+                        {currentView === 'PRACTICE_ROOM' && (
+                            selectedSong
+                                ? <PracticeRoom isTourMode={showTour} onBack={goBack} initialSong={selectedSong} />
+                                : <PracticeRoom isTourMode={showTour} initialSong={selectedSong} onBack={goBack} />
+                        )}
+                    </Suspense>
                 </Layout>
             )}
         </div>
