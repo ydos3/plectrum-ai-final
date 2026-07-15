@@ -9,6 +9,10 @@ import { handleSongsRequest } from '../server/songsHandler';
 import { neonSongsDB, ensureSchema, isDbConfigured } from '../server/db';
 import { getUserId } from '../server/session';
 
+// Web Request/Response handler → must run on Vercel's Edge runtime. Neon's
+// serverless driver and @auth/core are both Edge-native.
+export const config = { runtime: 'edge' };
+
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 

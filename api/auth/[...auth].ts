@@ -8,6 +8,9 @@
 import { Auth } from '@auth/core';
 import { authConfig, isAuthConfigured } from '../../server/authConfig';
 
+// @auth/core speaks Web Request/Response → run on Vercel's Edge runtime.
+export const config = { runtime: 'edge' };
+
 export default async function handler(request: Request): Promise<Response> {
   if (!isAuthConfigured()) {
     return new Response(JSON.stringify({ error: 'auth not configured' }), {
