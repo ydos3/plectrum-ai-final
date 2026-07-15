@@ -31,6 +31,10 @@ const NOTE_ZONE_TOP = 0.42;    // upper portion of the stage = "point to pick a 
 const NOTE_SELECT_DWELL = 200; // ms of pointing before a chord commits
 const MOTION_GATE = 0.004;     // low so gentle hand movement still registers
 const HAND_PERSIST_MS = 650;   // treat the hand as still-present briefly after motion stops
+// Phones have far less CPU for camera inference; ~34fps keeps them smooth while
+// desktops get the snappier ~45fps. Strum recognition stays responsive at both.
+const IS_MOBILE = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const INFER_INTERVAL_MS = IS_MOBILE ? 29 : 22;
 
 const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const [cameraState, setCameraState] = useState<CameraState>('idle');
@@ -84,7 +88,10 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     fieldRef.current = field;
     const sync = () => {
       const rect = stage.getBoundingClientRect();
-      field.resize(rect.width, rect.height, Math.min(2, window.devicePixelRatio || 1));
+      // Cap devicePixelRatio lower on phones — full DPR on a retina phone triples
+      // the pixels to fill every frame and is the main cause of stage jank.
+      const maxDpr = IS_MOBILE ? 1.5 : 2;
+      field.resize(rect.width, rect.height, Math.min(maxDpr, window.devicePixelRatio || 1));
     };
     sync();
     field.start();
@@ -145,9 +152,10 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const selectChordRef = useRef(setChordIndex);
   const scaleLenRef = useRef(scale.chords.length); useEffect(() => { scaleLenRef.current = scale.chords.length; }, [scale.chords.length]);
 
-  // Fixed, pleasant reverb so the guitar sounds rich — no user-facing control
-  // (the old slider confused people and cluttered the stage).
-  useEffect(() => { setResonance(0.3); }, []);
+  // Fixed, restrained reverb so the guitar sounds rich but stays clean when a
+  // strum fires several strings fast — no user-facing control (the old slider
+  // confused people and cluttered the stage).
+  useEffect(() => { setResonance(0.22); }, []);
 
   // ─── Camera + gesture processing ─────────────────────────────────────────────
   // Collect hand points (normalized, mirrored) from the best source available,
@@ -183,10 +191,10 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     const video = videoRef.current;
     const now = performance.now();
 
-    // Throttle the heavy detection to ~45fps regardless of the 60fps rAF — snappy
-    // enough that fast strums register, still light on phones. (Visuals keep
-    // running at 60fps in ParticleField.)
-    if (now - lastInferRef.current < 22) {
+    // Throttle the heavy detection (see INFER_INTERVAL_MS) regardless of the
+    // 60fps rAF — snappy enough that fast strums register, still light on phones.
+    // (Visuals keep running at 60fps in ParticleField.)
+    if (now - lastInferRef.current < INFER_INTERVAL_MS) {
       rafRef.current = requestAnimationFrame(processFrame);
       return;
     }

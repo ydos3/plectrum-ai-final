@@ -10,11 +10,16 @@ let masterMixBus: GainNode | null = null;
 let reverbConvolver: ConvolverNode | null = null;
 let reverbWet: GainNode | null = null;
 let resonanceAmount = 0.16; // 0..1, controllable via setResonance()
-// The mix bus now runs through a 4x-oversampled soft limiter, so we can push
-// perceived loudness up without the earlier cracking/clipping.
-const MASTER_OUTPUT_GAIN = 1.4;
+// The mix bus runs through a 4x-oversampled soft limiter. Master gain kept with
+// enough headroom that a full 6-string strum doesn't slam the limiter into
+// audible pumping/distortion ("breaking").
+const MASTER_OUTPUT_GAIN = 1.15;
 const OUTPUT_CEILING_GAIN = 0.92;
-const MAX_ACTIVE_VOICES = 28;
+// Phones have a much weaker audio thread — fewer simultaneous voices + fewer
+// harmonics per note keeps strums crackle-free and the UI smooth.
+const IS_MOBILE = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const MAX_ACTIVE_VOICES = IS_MOBILE ? 16 : 28;
+const HARMONIC_PARTIALS = IS_MOBILE ? 3 : 4;
 const MAX_REVERB_WET = 0.6;
 
 // Generate a short, warm plate-style impulse response for the reverb send.
@@ -37,9 +42,18 @@ type Voice = {
   nodes: AudioNode[];
   stopAt: number;
   cleanupTimer: number;
+  /** String this voice belongs to (0..5), or undefined for percussion/one-shots. */
+  stringIdx?: number;
+  /** The voice's output gain, so it can be released smoothly when re-struck. */
+  releaseGain?: GainNode;
 };
 
 const activeVoices: Voice[] = [];
+// The single voice currently ringing on each guitar string. A real string only
+// sounds one note at a time, so re-striking a string releases its previous note
+// instead of stacking — this is what stops fast strums from piling up dozens of
+// oscillators and crackling.
+const stringVoices: (Voice | null)[] = [null, null, null, null, null, null];
 
 const cleanupVoice = (voice: Voice) => {
   window.clearTimeout(voice.cleanupTimer);
@@ -52,6 +66,25 @@ const cleanupVoice = (voice: Voice) => {
   });
   const index = activeVoices.indexOf(voice);
   if (index >= 0) activeVoices.splice(index, 1);
+  if (typeof voice.stringIdx === 'number' && stringVoices[voice.stringIdx] === voice) {
+    stringVoices[voice.stringIdx] = null;
+  }
+};
+
+// Quickly fade + stop a voice (used when a string is re-struck) so the restrike
+// is clean, with no click and no lingering oscillators.
+const releaseVoice = (voice: Voice) => {
+  if (!audioCtx) return cleanupVoice(voice);
+  const t = audioCtx.currentTime;
+  if (voice.releaseGain) {
+    try {
+      voice.releaseGain.gain.cancelScheduledValues(t);
+      voice.releaseGain.gain.setTargetAtTime(0.0001, t, 0.012);
+    } catch { /* node already gone */ }
+  }
+  voice.sources.forEach(source => { try { source.stop(t + 0.06); } catch { /* already stopped */ } });
+  window.clearTimeout(voice.cleanupTimer);
+  voice.cleanupTimer = window.setTimeout(() => cleanupVoice(voice), 120);
 };
 
 const registerVoice = (voice: Omit<Voice, 'cleanupTimer'>) => {
@@ -60,6 +93,13 @@ const registerVoice = (voice: Omit<Voice, 'cleanupTimer'>) => {
     ...voice,
     cleanupTimer: window.setTimeout(() => cleanupVoice(fullVoice), Math.max(250, (voice.stopAt - audioCtx.currentTime + 0.2) * 1000))
   };
+
+  // One note per string: release whatever was ringing on this string first.
+  if (typeof fullVoice.stringIdx === 'number') {
+    const prev = stringVoices[fullVoice.stringIdx];
+    if (prev && prev !== fullVoice) releaseVoice(prev);
+    stringVoices[fullVoice.stringIdx] = fullVoice;
+  }
 
   activeVoices.push(fullVoice);
 
@@ -185,6 +225,7 @@ export const stopAllAudio = () => {
       }
     });
   });
+  stringVoices.fill(null);
 };
 
 export const BASE_FREQUENCIES = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
@@ -260,10 +301,10 @@ const scheduleNote = (
   resonance.gain.setValueAtTime(isBassString ? 5 : 3, now);
   resonance.Q.value = 1.2;
 
-  const partials = [1, 2, 3, 4];
-  const amplitudes = isBassString
+  const partials = [1, 2, 3, 4].slice(0, HARMONIC_PARTIALS);
+  const amplitudes = (isBassString
     ? [1, 0.5, 0.28, 0.14]
-    : [1, 0.4, 0.22, 0.12];
+    : [1, 0.4, 0.22, 0.12]).slice(0, HARMONIC_PARTIALS);
   const oscillators: OscillatorNode[] = [];
   const harmonicGains: GainNode[] = [];
 
@@ -323,7 +364,9 @@ const scheduleNote = (
   registerVoice({
     sources: [...oscillators, pickNoise],
     nodes: [noteGain, bodyFilter, resonance, pickFilter, pickGain, ...harmonicGains, ...oscillators, pickNoise],
-    stopAt: now + decayDuration + 0.1
+    stopAt: now + decayDuration + 0.1,
+    stringIdx,
+    releaseGain: noteGain,
   });
 };
 

@@ -39,7 +39,9 @@ interface StringState {
 }
 
 const MAX_STRING_AMP = 7;
-const MAX_WISPS = 90; // hard budget so it never chugs
+// Hard particle budget so it never chugs — smaller on phones (weaker GPU/CPU).
+const IS_MOBILE = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const MAX_WISPS = IS_MOBILE ? 42 : 90;
 
 export class ParticleField {
   private ctx: CanvasRenderingContext2D;
