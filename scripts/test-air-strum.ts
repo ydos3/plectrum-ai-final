@@ -1,6 +1,100 @@
 import assert from 'node:assert/strict';
 import { StrumDetector, stringIndexFromX, chordIndexFromX, resolvePluckNote } from '../services/airStrumDetector.ts';
+import { StrumEngine } from '../services/airStrumEngine.ts';
 import { parseFingerstyleTab } from '../services/tabParser.ts';
+
+// ─── Simulated hand gestures through the real engine ─────────────────────────
+// This drives the exact logic Air Strum uses, with synthetic hand positions, so
+// recognition is verified without a camera.
+{
+  const STRUM_Y = 0.7; // lower zone
+  const NOTE_Y = 0.2;  // upper zone
+
+  // A left→right sweep across the whole string band should pluck all 6 strings in order.
+  {
+    const e = new StrumEngine();
+    const played: number[] = [];
+    let t = 0;
+    // Sweep x from 0.05 → 0.95 over ~20 frames (33ms each).
+    for (let i = 0; i <= 20; i++) {
+      const x = 0.05 + (0.90 * i) / 20;
+      const r = e.step([{ x, y: STRUM_Y }], (t += 33));
+      played.push(...r.pluck);
+    }
+    assert.deepEqual(played, [0, 1, 2, 3, 4, 5], `full sweep plays every string in order (got ${played})`);
+  }
+
+  // A right→left sweep plays them in reverse.
+  {
+    const e = new StrumEngine();
+    const played: number[] = [];
+    let t = 0;
+    for (let i = 0; i <= 20; i++) {
+      const x = 0.95 - (0.90 * i) / 20;
+      const r = e.step([{ x, y: STRUM_Y }], (t += 33));
+      played.push(...r.pluck);
+    }
+    assert.deepEqual(played, [5, 4, 3, 2, 1, 0], `reverse sweep plays every string (got ${played})`);
+  }
+
+  // A still (slightly jittering) hand must NOT play anything.
+  {
+    const e = new StrumEngine();
+    const played: number[] = [];
+    let t = 0;
+    for (let i = 0; i < 30; i++) {
+      const x = 0.5 + (i % 2 === 0 ? 0.004 : -0.004); // tiny jitter around a boundary
+      const r = e.step([{ x, y: STRUM_Y }], (t += 33));
+      played.push(...r.pluck);
+    }
+    assert.equal(played.length, 0, `still/jittering hand plays nothing (got ${played})`);
+  }
+
+  // Entering the frame over a string does NOT auto-play (fixes "one tune on load").
+  {
+    const e = new StrumEngine();
+    const r = e.step([{ x: 0.42, y: STRUM_Y }], 33);
+    assert.equal(r.pluck.length, 0, 'entering the frame does not auto-pluck');
+  }
+
+  // A fast sweep that skips (0.10 → 0.90 in one jump) still plucks every string it passed.
+  {
+    const e = new StrumEngine();
+    e.step([{ x: 0.10, y: STRUM_Y }], 33);          // arm at string 0
+    const r = e.step([{ x: 0.90, y: STRUM_Y }], 66); // jump to string 5
+    // smoothing pulls the jump toward the middle, but it must cross multiple strings
+    assert.ok(r.pluck.length >= 2, `fast sweep crosses multiple strings (got ${r.pluck})`);
+    assert.ok(r.pluck[0] < r.pluck[r.pluck.length - 1], 'crossed strings are in ascending order');
+  }
+
+  // Pointing at a chord (upper zone) and holding commits that chord after the dwell.
+  {
+    const e = new StrumEngine();
+    let t = 0;
+    let selected: number | null = null;
+    for (let i = 0; i < 15; i++) {
+      const r = e.step([{ x: 1.0, y: NOTE_Y }], (t += 33)); // far right → last chord (index 5)
+      if (r.selectChord !== null) selected = r.selectChord;
+    }
+    assert.equal(selected, 5, `point-and-hold on the right selects the last chord (got ${selected})`);
+  }
+
+  // Two hands: upper picks a chord, lower strums — independently.
+  {
+    const e = new StrumEngine();
+    let t = 0;
+    let selected: number | null = null;
+    const played: number[] = [];
+    for (let i = 0; i <= 12; i++) {
+      const strumX = 0.05 + (0.90 * i) / 12;
+      const r = e.step([{ x: 0.0, y: NOTE_Y }, { x: strumX, y: STRUM_Y }], (t += 33));
+      if (r.selectChord !== null) selected = r.selectChord;
+      played.push(...r.pluck);
+    }
+    assert.equal(selected, 0, 'left-pointed hand selects the first chord');
+    assert.ok(played.length >= 4, `strum hand still plays while the other picks a chord (got ${played})`);
+  }
+}
 
 // ─── Hand-position → string / chord mapping ──────────────────────────────────
 {

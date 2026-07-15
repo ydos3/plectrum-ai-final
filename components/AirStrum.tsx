@@ -3,7 +3,8 @@ import { ArrowLeft, Camera, CameraOff, Hand, Sparkles, ShieldCheck, ArrowDown, A
 import { getChordFingering } from '../services/chordService';
 import { playStrum, playNote, resumeAudio, stopAllAudio, setResonance, getResonance } from '../services/audioService';
 import { ParticleField } from '../services/particleField';
-import { stringIndexFromX, chordIndexFromX, resolvePluckNote } from '../services/airStrumDetector';
+import { resolvePluckNote } from '../services/airStrumDetector';
+import { StrumEngine } from '../services/airStrumEngine';
 import { createHandTracker, HandTracker } from '../services/handTracking';
 
 interface AirStrumProps {
@@ -51,18 +52,19 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const prevLumaRef = useRef<Float32Array | null>(null);
   const lumaRef = useRef<Float32Array | null>(null);
   const activityRef = useRef<{ x: number; y: number; mode: 'note' | 'strum' | null; string: number; mag: number; t: number; progress: number }>({ x: 0.5, y: 0.5, mode: null, string: -1, mag: 0, t: 0, progress: 0 });
-  const perStringLastRef = useRef<number[]>(Array(6).fill(0));
-  const lastHandStringRef = useRef(-1);
   // Last position where motion was seen — lets a still "point" keep registering
-  // for a moment so holding a finger on a chord selects reliably.
+  // for a moment so holding a finger on a chord selects reliably (fallback path).
   const lastSeenRef = useRef<{ x: number; y: number; t: number }>({ x: 0.5, y: 0.5, t: 0 });
+  // hoverNoteRef.idx mirrors the engine's hovered chord for the display interval.
   const hoverNoteRef = useRef<{ idx: number; since: number; committed: number }>({ idx: -1, since: 0, committed: -1 });
+  // Pure gesture engine — the SAME logic exercised by the simulation tests
+  // (scripts/test-air-strum.ts). Both the MediaPipe path and the motion fallback
+  // feed hand points into it, so a sway across the strings plucks every string it
+  // crosses (not just one), and gentle motion is enough — no velocity gate. All
+  // smoothing, dwell, debounce and per-string state lives inside the engine.
+  const engineRef = useRef<StrumEngine>(new StrumEngine());
   // MediaPipe hand tracking (precise, smooth) — with motion-diff as fallback.
   const trackerRef = useRef<HandTracker | null>(null);
-  const smoothRef = useRef<{ x: number; y: number } | null>(null); // EMA of the strum fingertip
-  const lastStrumXRef = useRef<number | null>(null);
-  const lastStrumSampleRef = useRef<{ x: number; t: number } | null>(null); // for velocity gating
-  const noteSmoothXRef = useRef<number | null>(null); // EMA of the chord-picking hand
   const lastInferRef = useRef(0); // throttle heavy inference (mobile-friendly)
   const [handTrackingOn, setHandTrackingOn] = useState(false);
   const [handTrackingLoading, setHandTrackingLoading] = useState(false);
@@ -147,6 +149,26 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const handleResonance = (v: number) => { setResonanceState(v); setResonance(v); };
 
   // ─── Camera + gesture processing ─────────────────────────────────────────────
+  // Collect hand points (normalized, mirrored) from the best source available,
+  // then run the ONE shared StrumEngine. Everything about *what plays* lives in
+  // the engine (tested headless); this function only sources hand positions and
+  // renders the result.
+  const applyEngine = useCallback((hands: { x: number; y: number }[], now: number) => {
+    const engine = engineRef.current;
+    engine.setChordCount(scaleLenRef.current);
+    const r = engine.step(hands, now);
+
+    // Play every string the strum hand crossed this frame, in sweep order.
+    for (const s of r.pluck) pluckRef.current(s);
+    // Commit a chord when the point-and-hold dwell completes.
+    if (r.selectChord !== null) selectChordRef.current(r.selectChord);
+
+    // Mirror engine state into the refs the display interval reads.
+    hoverNoteRef.current.idx = r.hoverChord;
+    const mode: 'note' | 'strum' | null = r.hoverChord >= 0 ? 'note' : (r.handInFrame ? 'strum' : null);
+    activityRef.current = { x: 0.5, y: 0.5, mode, string: r.strumString, mag: r.handInFrame ? 1 : 0, t: now, progress: r.hoverProgress };
+  }, []);
+
   const processFrame = useCallback(() => {
     const video = videoRef.current;
     const now = performance.now();
@@ -162,68 +184,12 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     // ── Preferred path: precise MediaPipe hand landmarks (smooth, hand-only) ──
     if (trackerRef.current && video && video.readyState >= 2) {
       const hands = trackerRef.current.detect(video, now);
-      if (hands.length === 0) {
-        lastHandStringRef.current = -1;
-        hoverNoteRef.current.committed = -1;
-        smoothRef.current = null;
-        lastStrumXRef.current = null;
-        activityRef.current = { x: 0.5, y: 0.5, mode: null, string: -1, mag: 0, t: now, progress: 0 };
-      } else {
-        // Upper hand picks chords; lower hand strums (matches real air-guitar).
-        const noteHand = hands.find(hd => hd.y < NOTE_ZONE_TOP);
-        const strumHand = hands.find(hd => hd.y >= NOTE_ZONE_TOP);
-
-        if (noteHand) {
-          // Smooth the chord-picking hand so jitter near a chip boundary doesn't
-          // flip the selection.
-          const nx = noteSmoothXRef.current === null ? noteHand.x : noteSmoothXRef.current + (noteHand.x - noteSmoothXRef.current) * 0.35;
-          noteSmoothXRef.current = nx;
-          const idx = chordIndexFromX(nx, scaleLenRef.current);
-          const hv = hoverNoteRef.current;
-          if (idx !== hv.idx) { hv.idx = idx; hv.since = now; }
-          const progress = Math.min(1, (now - hv.since) / NOTE_SELECT_DWELL);
-          if (progress >= 1 && hv.committed !== idx) { hv.committed = idx; selectChordRef.current(idx); }
-          activityRef.current = { x: nx, y: noteHand.y, mode: 'note', string: -1, mag: 1, t: now, progress };
-        } else {
-          hoverNoteRef.current.idx = -1;
-          hoverNoteRef.current.committed = -1;
-          noteSmoothXRef.current = null;
-        }
-
-        if (strumHand) {
-          // Heavier EMA smoothing to kill landmark jitter, then only pluck when
-          // the hand is genuinely MOVING across a string — gated by velocity, not
-          // just crossing a boundary. This stops false notes from a still hand.
-          const prev = smoothRef.current;
-          const sx = prev ? prev.x + (strumHand.x - prev.x) * 0.35 : strumHand.x;
-          const sy = prev ? prev.y + (strumHand.y - prev.y) * 0.35 : strumHand.y;
-          smoothRef.current = { x: sx, y: sy };
-
-          const sample = lastStrumSampleRef.current;
-          const dt = sample ? Math.max(0.001, (now - sample.t) / 1000) : 0;
-          const vx = sample ? Math.abs(sx - sample.x) / dt : 0; // normalized units / sec
-          lastStrumSampleRef.current = { x: sx, t: now };
-
-          const s = stringIndexFromX(sx, STRINGS_LEFT, STRINGS_SPAN, 6);
-          const MOVING = vx > 0.55;                       // real strum motion
-          if (s !== lastHandStringRef.current && MOVING && now - perStringLastRef.current[s] > 110) {
-            perStringLastRef.current[s] = now;
-            pluckRef.current(s);
-          }
-          lastHandStringRef.current = s;
-          lastStrumXRef.current = sx;
-          if (!noteHand) activityRef.current = { x: sx, y: sy, mode: 'strum', string: s, mag: 1, t: now, progress: 0 };
-        } else {
-          lastStrumXRef.current = null;
-          lastStrumSampleRef.current = null;
-          smoothRef.current = null;
-        }
-      }
+      applyEngine(hands.map(h => ({ x: h.x, y: h.y })), now);
       rafRef.current = requestAnimationFrame(processFrame);
       return;
     }
 
-    // ── Fallback path: coarse whole-frame motion detection ──
+    // ── Fallback path: coarse whole-frame motion detection → single hand point ──
     const canvas = procCanvasRef.current;
     if (video && canvas && video.readyState >= 2) {
       const w = canvas.width, h = canvas.height;
@@ -245,64 +211,32 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         const mag = sumMotion / (w * h * 255);
         const cx = sumMotion > 0 ? 1 - ((sumX / sumMotion) / w) : 0.5; // mirror to match view
         const cy = sumMotion > 0 ? (sumY / sumMotion) / h : 0.5;
-        const now = performance.now();
 
         const seen = mag > MOTION_GATE;
         if (seen) lastSeenRef.current = { x: cx, y: cy, t: now };
         const recent = now - lastSeenRef.current.t < HAND_PERSIST_MS;
-        // Effective position: live when moving, last-known when briefly still,
-        // so pointing at a chord and holding still keeps registering.
-        const ex = seen ? cx : lastSeenRef.current.x;
-        const ey = seen ? cy : lastSeenRef.current.y;
-
+        // Effective position: live when moving, last-known when briefly still, so
+        // pointing at a chord and holding still keeps registering. Feed it to the
+        // engine as one hand; drop to no-hands once motion is stale.
         if (seen || recent) {
-          if (ey < NOTE_ZONE_TOP) {
-            // Point-and-hold to pick a chord: map X across the chord chips.
-            const len = scaleLenRef.current;
-            const idx = chordIndexFromX(ex, len);
-            const hv = hoverNoteRef.current;
-            if (idx !== hv.idx) { hv.idx = idx; hv.since = now; }
-            const progress = Math.min(1, (now - hv.since) / NOTE_SELECT_DWELL);
-            if (progress >= 1 && hv.committed !== idx) {
-              hv.committed = idx;
-              selectChordRef.current(idx);
-            }
-            lastHandStringRef.current = -1;
-            activityRef.current = { x: ex, y: ey, mode: 'note', string: -1, mag, t: now, progress };
-          } else {
-            // Strum zone: pluck ONLY the string the hand is over — and only on
-            // real motion, so a resting hand doesn't machine-gun a string. Edge
-            // clamping keeps the outer strings (low E / high e) reachable.
-            hoverNoteRef.current.idx = -1; hoverNoteRef.current.committed = -1;
-            let s = -1;
-            if (seen) {
-              s = stringIndexFromX(ex, STRINGS_LEFT, STRINGS_SPAN, 6);
-              if (s !== lastHandStringRef.current && now - perStringLastRef.current[s] > 55) {
-                perStringLastRef.current[s] = now;
-                pluckRef.current(s);
-              }
-              lastHandStringRef.current = s;
-            }
-            activityRef.current = { x: ex, y: ey, mode: 'strum', string: s, mag, t: now, progress: 0 };
-          }
+          const ex = seen ? cx : lastSeenRef.current.x;
+          const ey = seen ? cy : lastSeenRef.current.y;
+          applyEngine([{ x: ex, y: ey }], now);
         } else {
-          lastHandStringRef.current = -1;
-          hoverNoteRef.current.committed = -1; // allow re-picking the same chord after the hand leaves
+          applyEngine([], now);
         }
       }
     }
     rafRef.current = requestAnimationFrame(processFrame);
-  }, []);
+  }, [applyEngine]);
 
   const stopCamera = useCallback(() => {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     if (videoRef.current) videoRef.current.srcObject = null;
     // Keep the loaded hand tracker alive for instant restart; it's closed on unmount.
+    engineRef.current.reset();
     prevLumaRef.current = null;
-    lastHandStringRef.current = -1;
-    smoothRef.current = null;
-    lastStrumXRef.current = null;
     setHandTrackingOn(false);
     setHandInFrame(false); setHoverNote(-1); setPlayingString(-1);
   }, []);
@@ -412,8 +346,9 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
               </button>
             ))}
           </div>
-          {/* chord chips */}
-          <div className="flex justify-between gap-1.5 max-w-2xl mx-auto">
+          {/* chord chips — full width so pointing X maps straight to the chip under
+              your finger (chordIndexFromX spans the whole frame). */}
+          <div className="flex justify-between gap-1.5 w-full">
             {scale.chords.map((c, i) => {
               const selected = i === Math.min(chordIndex, scale.chords.length - 1);
               const hovered = i === hoverNote;

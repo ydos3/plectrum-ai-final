@@ -41,9 +41,17 @@ const ChordTrainer: React.FC<ChordTrainerProps> = ({ onBack }) => {
   };
 
   const fingering = getChordFingering(currentChord);
-  const activeNotes = isRevealed && fingering 
+  const activeNotes = isRevealed && fingering
     ? fingering.frets.map((f, i) => ({ string: i, fret: f }))
     : [];
+
+  // Scale the big chord name to its length so long names (e.g. Csus2add9, F#m7b5)
+  // stay inside the card instead of spilling out the sides.
+  const chordSizeClass =
+    currentChord.length <= 3 ? 'text-7xl md:text-9xl'
+    : currentChord.length <= 5 ? 'text-6xl md:text-8xl'
+    : currentChord.length <= 7 ? 'text-5xl md:text-7xl'
+    : 'text-4xl md:text-6xl';
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto flex flex-col min-h-full items-center justify-center relative">
@@ -75,14 +83,14 @@ const ChordTrainer: React.FC<ChordTrainerProps> = ({ onBack }) => {
             ))}
           </div>
 
-          <div 
+          <div
              onClick={handleChordClick}
-             className="bg-[#2d1b15] px-16 py-10 rounded-3xl border border-[#5d4037] shadow-2xl text-center w-full max-w-lg cursor-pointer hover:bg-[#3e2723] transition-colors group relative"
+             className="bg-[#2d1b15] px-6 md:px-10 py-10 rounded-3xl border border-[#5d4037] shadow-2xl text-center w-full max-w-lg cursor-pointer hover:bg-[#3e2723] transition-colors group relative overflow-hidden"
           >
              <div className="absolute top-4 right-4 text-amber-700 group-hover:text-amber-500">
                  <Volume2 className="w-6 h-6" />
              </div>
-             <div className="text-9xl font-bold text-white mb-2 font-mono drop-shadow-lg">{currentChord}</div>
+             <div className={`${chordSizeClass} font-bold text-white mb-2 font-mono drop-shadow-lg leading-none break-words`}>{currentChord}</div>
              <p className="text-amber-500/50 text-xs uppercase tracking-widest mt-4">Click to Listen • {quizChords.length} chords in this set</p>
           </div>
 
