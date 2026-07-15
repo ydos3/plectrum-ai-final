@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test:lyrics-sync": "node scripts/test-lyrics-sync.ts",
     "test:air-strum": "node scripts/test-air-strum.ts",
-    "test": "node scripts/test-lyrics-sync.ts && node scripts/test-air-strum.ts",
+    "test:song-sync": "node scripts/test-song-sync.ts",
+    "test:songs-api": "node scripts/test-songs-api.ts",
+    "test": "node scripts/test-lyrics-sync.ts && node scripts/test-air-strum.ts && node scripts/test-song-sync.ts && node scripts/test-songs-api.ts",
     "audit:prod": "npm audit --omit=dev",
     "deploy:vercel": "vercel --prod",
     "validate:song-db": "node scripts/validate-song-db.mjs",
@@ -18,15 +20,20 @@
     "smoke:db": "echo 'Run dev server first, then: curl -X POST http://localhost:5173/api/test-song-lookup -H \"Content-Type: application/json\" -d \"{\\\"query\\\":\\\"Majboor\\\"}\"'"
   },
   "dependencies": {
+    "@auth/core": "^0.34.3",
+    "@auth/pg-adapter": "^1.11.2",
+    "@neondatabase/serverless": "^1.1.0",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "dotenv": "^17.4.2",
     "lucide-react": "^0.562.0",
+    "pg": "^8.22.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/pg": "^8.20.0",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.5.3",
     "postcss": "^8.5.19",

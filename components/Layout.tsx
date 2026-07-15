@@ -6,6 +6,7 @@ import { playLogoChord, playNavChord } from '../services/audioService';
 import { logout } from '../services/authService';
 import PlectrumLogo from './PlectrumLogo';
 import FloatingAssistant from './FloatingAssistant';
+import CloudSyncPanel from './CloudSyncPanel';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -273,6 +274,9 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
                 <p className="text-[9px] text-amber-500/80 truncate font-medium capitalize">Premium Member</p>
               </div>
             </div>
+
+            {/* Optional cloud sync — renders nothing unless VITE_CLOUD_SYNC is on. */}
+            <CloudSyncPanel />
 
             <button onClick={(e) => { e.stopPropagation(); handleLogout(); }} className="w-full flex items-center justify-center gap-2 text-xs text-amber-600 hover:text-red-400 transition-colors">
               <LogOut className="w-3 h-3" /> Sign Out

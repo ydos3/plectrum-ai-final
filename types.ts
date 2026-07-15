@@ -54,6 +54,8 @@ export interface Song {
     chords?: string[];
   }[];
   createdAt: number;
+  /** Last-modified timestamp (ms). Used for last-write-wins cloud sync; set on every save. */
+  updatedAt?: number;
 }
 
 export interface ChatMessage {

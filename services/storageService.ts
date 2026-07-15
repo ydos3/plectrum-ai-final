@@ -213,7 +213,8 @@ export const getSongs = (): Song[] => {
 export const saveSong = (song: Song): void => {
   const data = localStorage.getItem(STORAGE_KEY);
   const allSongs: Song[] = data ? JSON.parse(data) : [];
-  const normalizedSong = normalizeStoredSong(song);
+  // Stamp the modification time so cloud sync can resolve conflicts (newest wins).
+  const normalizedSong = normalizeStoredSong({ ...song, updatedAt: Date.now() });
 
   const existingIndex = allSongs.findIndex(s => s.id === normalizedSong.id);
   
@@ -224,6 +225,13 @@ export const saveSong = (song: Song): void => {
   }
   
   localStorage.setItem(STORAGE_KEY, JSON.stringify(allSongs));
+};
+
+// Replace the whole library verbatim (used by cloud sync after a merge). Unlike
+// saveSong this does NOT re-stamp updatedAt — the merge already chose the correct
+// timestamps, and re-stamping would corrupt last-write-wins on the next sync.
+export const replaceLibrary = (songs: Song[]): void => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(songs.map(normalizeStoredSong)));
 };
 
 export const deleteSong = (id: string): void => {
