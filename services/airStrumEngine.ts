@@ -21,7 +21,8 @@ export interface EngineConfig {
   stringCount: number;   // 6
   chordCount: number;    // number of chord chips
   dwellMs: number;       // hold time to commit a chord
-  moveMin: number;       // min horizontal move to allow a new pluck (kills jitter)
+  moveMin: number;       // min horizontal move to arm/ignore micro-jitter
+  repluckTravel: number; // horizontal travel over the SAME string that re-plucks it
   perStringDebounceMs: number;
   smoothAlpha: number;   // EMA factor (higher = more responsive)
 }
@@ -33,9 +34,12 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   stringCount: 6,
   chordCount: 6,
   dwellMs: 220,
-  moveMin: 0.02,
-  perStringDebounceMs: 90,
-  smoothAlpha: 0.5,
+  moveMin: 0.012,
+  // Wave back-and-forth over one string ≈ re-strum it. Small enough to feel
+  // sensitive, large enough that smoothed hand-jitter (~0.004) never triggers it.
+  repluckTravel: 0.03,
+  perStringDebounceMs: 55,
+  smoothAlpha: 0.6,
 };
 
 export interface EngineResult {
@@ -53,6 +57,8 @@ export class StrumEngine {
   private lastStrumIdx = -1;
   private lastPluckX: number | null = null;
   private armed = false; // true right after the hand enters, before its first pluck
+  private strumPrevX: number | null = null; // previous frame's smoothed x (for direction)
+  private pluckDir = 0;  // horizontal direction (+1/-1) of the last pluck's stroke
   private perStringLast: number[];
   private noteSmoothX: number | null = null;
   private hover = { idx: -1, since: 0, committed: -1 };
@@ -66,8 +72,10 @@ export class StrumEngine {
 
   reset() {
     this.strumSmoothX = null;
+    this.strumPrevX = null;
     this.lastStrumIdx = -1;
     this.lastPluckX = null;
+    this.pluckDir = 0;
     this.armed = false;
     this.noteSmoothX = null;
     this.hover = { idx: -1, since: 0, committed: -1 };
@@ -80,8 +88,10 @@ export class StrumEngine {
 
     if (hands.length === 0) {
       this.strumSmoothX = null;
+      this.strumPrevX = null;
       this.lastStrumIdx = -1;
       this.lastPluckX = null;
+      this.pluckDir = 0;
       this.armed = false;
       this.noteSmoothX = null;
       this.hover.committed = -1;
@@ -109,12 +119,30 @@ export class StrumEngine {
       this.noteSmoothX = null;
     }
 
-    // ── Strum (lower hand sweep → pluck every crossed string) ──
+    // ── Strum (lower hand) ──
+    // Two ways to sound strings, so it feels like a real guitar:
+    //  • Move ACROSS strings → rake every string crossed, in order (a strum).
+    //  • Wave back-and-forth over ONE string → re-pluck it on each reversal.
+    // A one-way sweep therefore plays each string exactly once, while planting on
+    // a string and sawing keeps sounding it. No velocity gate — gentle motion works.
     if (strumHand) {
       const sx = this.strumSmoothX === null ? strumHand.x : this.strumSmoothX + (strumHand.x - this.strumSmoothX) * cfg.smoothAlpha;
+      const prevX = this.strumPrevX;
       this.strumSmoothX = sx;
+      this.strumPrevX = sx;
+      const frameDir = prevX === null ? 0 : Math.sign(sx - prevX);
       const idx = stringIndexFromX(sx, cfg.stringsLeft, cfg.stringsSpan, cfg.stringCount);
       result.strumString = idx;
+
+      const pluckOne = (k: number, dir: number) => {
+        if (now - this.perStringLast[k] > cfg.perStringDebounceMs) {
+          this.perStringLast[k] = now;
+          result.pluck.push(k);
+        }
+        this.pluckDir = dir || this.pluckDir;
+        this.lastPluckX = sx;
+        this.armed = false;
+      };
 
       if (this.lastStrumIdx === -1) {
         // Just entered — arm without auto-playing (fixes "plays one note on load").
@@ -122,12 +150,10 @@ export class StrumEngine {
         this.lastPluckX = sx;
         this.armed = true;
       } else if (idx !== this.lastStrumIdx && this.lastPluckX !== null && Math.abs(sx - this.lastPluckX) > cfg.moveMin) {
-        // Pluck every string crossed between the last string and the new one.
-        // On the FIRST crossing of a sweep (armed), include the origin string so a
-        // sway that starts over string 0 still plays it — "play everything together".
+        // Crossed into a different string → rake each crossed string in order.
+        // On the first crossing after arming, include the origin string too.
         const dir = idx > this.lastStrumIdx ? 1 : -1;
         const start = this.armed ? this.lastStrumIdx : this.lastStrumIdx + dir;
-        this.armed = false;
         for (let k = start; ; k += dir) {
           if (now - this.perStringLast[k] > cfg.perStringDebounceMs) {
             this.perStringLast[k] = now;
@@ -137,11 +163,21 @@ export class StrumEngine {
         }
         this.lastStrumIdx = idx;
         this.lastPluckX = sx;
+        this.pluckDir = dir;
+        this.armed = false;
+      } else if (idx === this.lastStrumIdx && this.lastPluckX !== null && Math.abs(sx - this.lastPluckX) > cfg.repluckTravel) {
+        // Still over the same string. Re-pluck only on the FIRST stroke after
+        // arming, or when the stroke direction REVERSES — so a one-way sweep
+        // doesn't double-hit a string, but sawing on one string keeps sounding it.
+        const reversed = frameDir !== 0 && frameDir !== this.pluckDir;
+        if (this.armed || reversed) pluckOne(idx, frameDir);
       }
     } else {
       this.strumSmoothX = null;
+      this.strumPrevX = null;
       this.lastStrumIdx = -1;
       this.lastPluckX = null;
+      this.pluckDir = 0;
       this.armed = false;
     }
 

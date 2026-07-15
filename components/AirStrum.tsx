@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Camera, CameraOff, Hand, Sparkles, ShieldCheck, ArrowDown, ArrowUp, Music, Waves } from 'lucide-react';
+import { ArrowLeft, Camera, CameraOff, Hand, Sparkles, ShieldCheck, ArrowDown, ArrowUp, Music } from 'lucide-react';
 import { getChordFingering } from '../services/chordService';
-import { playStrum, playNote, resumeAudio, stopAllAudio, setResonance, getResonance } from '../services/audioService';
+import { playStrum, playNote, resumeAudio, stopAllAudio, setResonance } from '../services/audioService';
 import { ParticleField } from '../services/particleField';
 import { resolvePluckNote } from '../services/airStrumDetector';
 import { StrumEngine } from '../services/airStrumEngine';
@@ -36,7 +36,6 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [scaleIndex, setScaleIndex] = useState(5);
   const [chordIndex, setChordIndex] = useState(0);
-  const [resonance, setResonanceState] = useState(() => getResonance());
   const [handInFrame, setHandInFrame] = useState(false);
   const [hoverNote, setHoverNote] = useState(-1);
   const [hoverProgress, setHoverProgress] = useState(0);
@@ -146,7 +145,9 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   const selectChordRef = useRef(setChordIndex);
   const scaleLenRef = useRef(scale.chords.length); useEffect(() => { scaleLenRef.current = scale.chords.length; }, [scale.chords.length]);
 
-  const handleResonance = (v: number) => { setResonanceState(v); setResonance(v); };
+  // Fixed, pleasant reverb so the guitar sounds rich — no user-facing control
+  // (the old slider confused people and cluttered the stage).
+  useEffect(() => { setResonance(0.3); }, []);
 
   // ─── Camera + gesture processing ─────────────────────────────────────────────
   // Collect hand points (normalized, mirrored) from the best source available,
@@ -158,8 +159,17 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     engine.setChordCount(scaleLenRef.current);
     const r = engine.step(hands, now);
 
-    // Play every string the strum hand crossed this frame, in sweep order.
-    for (const s of r.pluck) pluckRef.current(s);
+    // Play every string the strum hand crossed this frame. When a fast wave rakes
+    // several strings in one frame, stagger them a few ms apart so it sounds like
+    // a real strum sweeping across the neck — not all strings hit at once.
+    if (r.pluck.length === 1) {
+      pluckRef.current(r.pluck[0]);
+    } else {
+      r.pluck.forEach((s, i) => {
+        if (i === 0) pluckRef.current(s);
+        else window.setTimeout(() => pluckRef.current(s), i * 24);
+      });
+    }
     // Commit a chord when the point-and-hold dwell completes.
     if (r.selectChord !== null) selectChordRef.current(r.selectChord);
 
@@ -173,9 +183,10 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     const video = videoRef.current;
     const now = performance.now();
 
-    // Throttle the heavy detection to ~30fps regardless of the 60fps rAF, so it
-    // stays smooth on phones. (Visuals keep running at 60fps in ParticleField.)
-    if (now - lastInferRef.current < 33) {
+    // Throttle the heavy detection to ~45fps regardless of the 60fps rAF — snappy
+    // enough that fast strums register, still light on phones. (Visuals keep
+    // running at 60fps in ParticleField.)
+    if (now - lastInferRef.current < 22) {
       rafRef.current = requestAnimationFrame(processFrame);
       return;
     }
@@ -404,13 +415,6 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
         <div className="absolute bottom-2 left-3 z-20 flex items-center gap-2 bg-black/50 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-amber-900/40">
           <Music className="w-4 h-4 text-amber-400" />
           <span className="text-amber-100 font-display font-bold text-base">{currentChordName}</span>
-        </div>
-
-        {/* Resonance control */}
-        <div className="absolute bottom-2 right-3 z-20 flex items-center gap-2 bg-black/50 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-amber-900/40">
-          <Waves className="w-4 h-4 text-amber-400" />
-          <input type="range" min={0} max={1} step={0.05} value={resonance} onChange={e => handleResonance(parseFloat(e.target.value))}
-            aria-label="Resonance" className="w-20 md:w-28 accent-amber-500 cursor-pointer" />
         </div>
 
         {/* Idle / camera-state overlay */}

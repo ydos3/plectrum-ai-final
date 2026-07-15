@@ -50,6 +50,23 @@ import { parseFingerstyleTab } from '../services/tabParser.ts';
     assert.equal(played.length, 0, `still/jittering hand plays nothing (got ${played})`);
   }
 
+  // Waving back-and-forth over ONE string re-plucks that string repeatedly
+  // (a real guitar lets you rake one string over and over — this was the bug
+  // where holding on one string took "5 seconds" to sound).
+  {
+    const e = new StrumEngine();
+    const played: number[] = [];
+    let t = 0;
+    e.step([{ x: 0.58, y: STRUM_Y }], (t += 33)); // arm on string 3
+    const targets = [0.52, 0.52, 0.64, 0.64, 0.52, 0.52, 0.64, 0.64]; // oscillate within string 3's band
+    for (const x of targets) {
+      const r = e.step([{ x, y: STRUM_Y }], (t += 60));
+      played.push(...r.pluck);
+    }
+    assert.ok(played.length >= 3, `waving over one string re-plucks it repeatedly (got ${played})`);
+    assert.ok(played.every(s => s === 3), `all re-plucks stay on the waved string (got ${played})`);
+  }
+
   // Entering the frame over a string does NOT auto-play (fixes "one tune on load").
   {
     const e = new StrumEngine();
