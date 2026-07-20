@@ -6,6 +6,7 @@
 import { neon } from '@neondatabase/serverless';
 import type { Song } from '../types';
 import type { SongsDB } from './songsHandler';
+import type { UsersDB, CloudUser } from './emailAuthHandler';
 
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 
@@ -36,6 +37,35 @@ export const ensureSchema = async (): Promise<void> => {
     )
   `;
   await db`CREATE INDEX IF NOT EXISTS songs_user_idx ON songs (user_id)`;
+  // Email+password accounts (separate from any Auth.js OAuth tables).
+  await db`
+    CREATE TABLE IF NOT EXISTS cloud_users (
+      id            TEXT PRIMARY KEY,
+      email         TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at    BIGINT NOT NULL DEFAULT 0
+    )
+  `;
+};
+
+export const neonUsersDB: UsersDB = {
+  async getUserByEmail(email: string): Promise<CloudUser | null> {
+    const db = requireSql();
+    const rows = (await db`SELECT id, email, password_hash FROM cloud_users WHERE email = ${email} LIMIT 1`) as
+      { id: string; email: string; password_hash: string }[];
+    if (rows.length === 0) return null;
+    return { id: rows[0].id, email: rows[0].email, passwordHash: rows[0].password_hash };
+  },
+
+  async createUser(email: string, passwordHash: string): Promise<CloudUser> {
+    const db = requireSql();
+    const id = crypto.randomUUID();
+    await db`
+      INSERT INTO cloud_users (id, email, password_hash, created_at)
+      VALUES (${id}, ${email}, ${passwordHash}, ${Date.now()})
+    `;
+    return { id, email, passwordHash };
+  },
 };
 
 export const neonSongsDB: SongsDB = {

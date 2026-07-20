@@ -53,3 +53,13 @@ CREATE TABLE IF NOT EXISTS songs (
   PRIMARY KEY (user_id, id)
 );
 CREATE INDEX IF NOT EXISTS songs_user_idx ON songs (user_id);
+
+-- ── Email+password cloud accounts (cross-device login) ────────────────────────
+-- Also created lazily by server/db.ts#ensureSchema, so running this by hand is
+-- optional — but harmless.
+CREATE TABLE IF NOT EXISTS cloud_users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at    BIGINT NOT NULL DEFAULT 0
+);

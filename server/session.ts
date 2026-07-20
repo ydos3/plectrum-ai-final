@@ -4,6 +4,7 @@
 
 import { decode } from '@auth/core/jwt';
 import { SESSION_COOKIE_SECURE, SESSION_COOKIE_INSECURE } from './authConfig';
+import { verifyCloudToken } from './cloudToken';
 
 /** Parse a Cookie header into a name→value map. */
 const parseCookies = (header: string | null): Record<string, string> => {
@@ -25,6 +26,13 @@ const parseCookies = (header: string | null): Record<string, string> => {
 export const getUserId = async (request: Request): Promise<string | null> => {
   const secret = process.env.AUTH_SECRET;
   if (!secret) return null;
+
+  // Preferred: email+password accounts send a Bearer session token.
+  const authHeader = request.headers.get('authorization') || request.headers.get('Authorization');
+  if (authHeader?.startsWith('Bearer ')) {
+    const cloud = await verifyCloudToken(authHeader.slice(7).trim(), secret);
+    if (cloud?.uid) return cloud.uid;
+  }
 
   const cookies = parseCookies(request.headers.get('cookie'));
   const candidates: Array<[string, string]> = [

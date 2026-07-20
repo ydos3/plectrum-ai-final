@@ -7,6 +7,7 @@ import type { Song } from '../types';
 import { getSongs, replaceLibrary } from './storageService';
 import { mergeLibraries, syncable } from './songSync';
 import { cloudSyncEnabled } from './authClient';
+import { cloudAuthHeader, isCloudSignedIn } from './emailAuth';
 
 export interface SyncOutcome {
   pulled: number;   // songs that came from the cloud into the merged library
@@ -15,7 +16,7 @@ export interface SyncOutcome {
 }
 
 const getRemoteSongs = async (): Promise<Song[]> => {
-  const res = await fetch('/api/songs', { credentials: 'same-origin' });
+  const res = await fetch('/api/songs', { headers: { ...cloudAuthHeader() } });
   if (res.status === 401) throw new Error('not signed in');
   if (!res.ok) throw new Error(`sync failed (${res.status})`);
   const data = await res.json().catch(() => ({ songs: [] }));
@@ -26,8 +27,7 @@ const pushSongs = async (songs: Song[]): Promise<number> => {
   if (songs.length === 0) return 0;
   const res = await fetch('/api/songs', {
     method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...cloudAuthHeader() },
     body: JSON.stringify({ songs }),
   });
   if (!res.ok) throw new Error(`push failed (${res.status})`);
@@ -41,6 +41,7 @@ const pushSongs = async (songs: Song[]): Promise<number> => {
  */
 export const syncNow = async (): Promise<SyncOutcome> => {
   if (!cloudSyncEnabled()) throw new Error('cloud sync is not enabled');
+  if (!isCloudSignedIn()) throw new Error('not signed in');
 
   const local = getSongs();
   const remote = await getRemoteSongs();
