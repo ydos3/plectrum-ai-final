@@ -751,19 +751,34 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   // just holds the auto-follow briefly, then it smoothly resumes on its own (no
   // explicit pause, no button). This lets the user glance ahead mid-song.
   const MANUAL_SCROLL_HOLD_MS = 1800;
+  // How far the container must move from where auto-scroll last left it to count
+  // as a real user scroll. Distinguishing by POSITION (not a time window) is what
+  // lets the user scroll while playing: the old time-window guard was reopened by
+  // the loop every frame, so it never closed and manual scroll was always ignored.
+  const USER_SCROLL_DELTA_PX = 6;
 
-  const holdAutoScrollForManualInput = useCallback(() => {
-    if (Date.now() < programmaticScrollUntilRef.current) return;
+  // `force` = the caller is a genuine user input (wheel/touch/pointer), which is
+  // never programmatic, so always engage the hold. For the generic scroll event
+  // (which ALSO fires from the auto loop's own writes), fall back to a position
+  // check: if the container sits where auto-scroll just left it, it's our write —
+  // ignore it; otherwise the user moved it, so follow them.
+  const holdAutoScrollForManualInput = useCallback((force = false) => {
     const container = scrollContainerRef.current;
+    if (!container) return;
+    if (!force) {
+      const autoPos = autoScrollCurrentRef.current;
+      if (autoPos !== null && Math.abs(container.scrollTop - autoPos) < USER_SCROLL_DELTA_PX) return;
+    }
     manualScrollHoldUntilRef.current = Date.now() + MANUAL_SCROLL_HOLD_MS;
-    autoScrollCurrentRef.current = container?.scrollTop ?? null;
+    autoScrollCurrentRef.current = container.scrollTop;
   }, []);
 
   const syncClockToManualScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    holdAutoScrollForManualInput();
+    // Called from wheel/touch-move/pointer-drag — always a real user gesture.
+    holdAutoScrollForManualInput(true);
 
     // In karaoke mode, the video player is the source of truth for time.
     // Manual scrolling should just pause auto-scroll (done above) so the user can read.
@@ -1535,11 +1550,11 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              <div
                ref={scrollContainerRef}
                onWheel={syncClockToManualScroll}
-               onScroll={holdAutoScrollForManualInput}
-               onTouchStart={holdAutoScrollForManualInput}
+               onScroll={() => holdAutoScrollForManualInput(false)}
+               onTouchStart={() => holdAutoScrollForManualInput(true)}
                onTouchMove={syncClockToManualScroll}
                onPointerDown={(event) => {
-                 if (!isDraggingSplitRef.current && event.pointerType !== 'mouse') holdAutoScrollForManualInput();
+                 if (!isDraggingSplitRef.current && event.pointerType !== 'mouse') holdAutoScrollForManualInput(true);
                }}
                onPointerMove={(event) => {
                  if (event.buttons === 1 && !isDraggingSplitRef.current) syncClockToManualScroll();

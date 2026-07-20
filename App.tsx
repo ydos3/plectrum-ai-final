@@ -17,7 +17,7 @@ const AirStrum = lazy(() => import('./components/AirStrum'));
 import { Song, ViewState, User, AppLanguage, SkillLevel } from './types';
 import { getCurrentUser, login } from './services/authService';
 import { playNextGlobalLoopChord, resumeAudio } from './services/audioService';
-import { getSongs } from './services/storageService';
+import { getSongs, setActiveUser } from './services/storageService';
 import { ArrowRight, Clock, Thermometer } from 'lucide-react';
 import PlectrumLogo from './components/PlectrumLogo';
 import { Star, Music2, Crown } from 'lucide-react';
@@ -87,6 +87,7 @@ const App: React.FC = () => {
     // Auth State
     const [authStep, setAuthStep] = useState<'LANDING' | 'NAME' | 'SKILL' | 'LANGUAGE'>('LANDING');
     const [authName, setAuthName] = useState('');
+    const [authEmail, setAuthEmail] = useState('');
     const [authSkill, setAuthSkill] = useState<SkillLevel | null>(null);
 
     // Environment State
@@ -214,6 +215,9 @@ const App: React.FC = () => {
         // Auth Check
         const user = getCurrentUser();
         if (user) {
+            // Point the library at this account BEFORE loading songs so the right
+            // per-email history is restored.
+            setActiveUser(user.email);
             // sessionStorage is empty on a genuine fresh launch (app fully
             // closed) → we intentionally land on the home library. On an
             // in-session refresh it still holds the last active view.
@@ -307,9 +311,11 @@ const App: React.FC = () => {
         playNextGlobalLoopChord();
     };
 
+    const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
     const handleNameSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (authName.trim().length > 0) {
+        if (authName.trim().length > 0 && isValidEmail(authEmail)) {
             setAuthStep('SKILL');
         }
     };
@@ -322,7 +328,10 @@ const App: React.FC = () => {
     const handleLanguageSelect = async (lang: AppLanguage) => {
         handleLanguageChange(lang);
         if (authSkill) {
-            const user = await login(authName, authSkill);
+            const user = await login(authName, authSkill, authEmail);
+            // Point the library at this account so their saved history is restored
+            // (and existing local songs migrate into the account on first login).
+            setActiveUser(user.email);
             setCurrentUser(user);
             navigateTo('LIBRARY', { push: false });
             setShowTour(true);
@@ -410,19 +419,28 @@ const App: React.FC = () => {
                                         <form onSubmit={handleNameSubmit} className="space-y-6 md:space-y-8">
                                             <div className="text-center">
                                                 <h2 className="text-2xl md:text-4xl font-bold text-white font-display mb-2">Artist Profile</h2>
-                                                <p className="text-amber-500/80 text-xs md:text-sm">How should the world know you?</p>
+                                                <p className="text-amber-500/80 text-xs md:text-sm">Sign in with your email so your songs &amp; history are saved.</p>
                                             </div>
                                             <input
                                                 autoFocus
                                                 value={authName}
                                                 onChange={e => setAuthName(e.target.value)}
                                                 placeholder="Stage Name"
-                                                className="w-full bg-[#1a0f0a] border-b-2 border-[#5d4037] focus:border-amber-500 p-4 md:p-6 text-2xl md:text-3xl text-center text-amber-100 outline-none transition-colors placeholder-amber-900/50 rounded-t-2xl font-display"
+                                                className="w-full bg-[#1a0f0a] border-b-2 border-[#5d4037] focus:border-amber-500 p-4 md:p-5 text-xl md:text-2xl text-center text-amber-100 outline-none transition-colors placeholder-amber-900/50 rounded-t-2xl font-display"
+                                            />
+                                            <input
+                                                type="email"
+                                                inputMode="email"
+                                                autoComplete="email"
+                                                value={authEmail}
+                                                onChange={e => setAuthEmail(e.target.value)}
+                                                placeholder="you@example.com"
+                                                className="w-full bg-[#1a0f0a] border-b-2 border-[#5d4037] focus:border-amber-500 p-4 md:p-5 text-lg md:text-xl text-center text-amber-100 outline-none transition-colors placeholder-amber-900/50 font-sans"
                                             />
                                             <button
                                                 type="submit"
-                                                disabled={!authName.trim()}
-                                                className="w-full py-3 md:py-4 bg-gradient-to-r from-amber-600 to-amber-700 text-white font-bold rounded-xl shadow-lg font-display tracking-wider text-base md:text-lg"
+                                                disabled={!authName.trim() || !isValidEmail(authEmail)}
+                                                className="w-full py-3 md:py-4 bg-gradient-to-r from-amber-600 to-amber-700 text-white font-bold rounded-xl shadow-lg font-display tracking-wider text-base md:text-lg disabled:opacity-50"
                                             >
                                                 Continue
                                             </button>

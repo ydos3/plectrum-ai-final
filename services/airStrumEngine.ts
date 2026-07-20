@@ -33,13 +33,15 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   stringsSpan: 0.80,
   stringCount: 6,
   chordCount: 6,
-  dwellMs: 220,
-  moveMin: 0.012,
+  dwellMs: 200,
+  moveMin: 0.009,
   // Wave back-and-forth over one string ≈ re-strum it. Small enough to feel
   // sensitive, large enough that smoothed hand-jitter (~0.004) never triggers it.
-  repluckTravel: 0.03,
-  perStringDebounceMs: 55,
-  smoothAlpha: 0.6,
+  repluckTravel: 0.024,
+  perStringDebounceMs: 45,
+  // Higher = the tracked position snaps to the hand faster (less lag). Tuned up
+  // for responsiveness; jitter is still held off by moveMin / repluckTravel.
+  smoothAlpha: 0.72,
 };
 
 export interface EngineResult {

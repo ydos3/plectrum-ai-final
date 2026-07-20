@@ -79,14 +79,18 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   }, []);
 
   const loadSongIntoLab = (song: Song) => {
-      // Fingerstyle tab songs (e.g. the Channa Mereya demo) load their playable
-      // tab directly so selecting them always shows their tabs.
-      if (song.fingerstyleTab) {
+      // A song is "fingerstyle" if it carries a playable tab OR its title says so
+      // (e.g. "… — Fingerstyle Study"). Those open straight into the TABS sequencer
+      // showing their own tab — never the default preset.
+      const titleSaysFingerstyle = /finger[-\s]?style|fingerpick/i.test(song.title || '');
+      if (song.fingerstyleTab || titleSaysFingerstyle) {
           setInputMode('FINGERSTYLE');
-          setInputText(song.fingerstyleTab);
+          // Prefer the explicit playable tab; otherwise start this song on an empty
+          // tab sheet (so it reflects THIS song, not whatever was loaded before).
+          setInputText(song.fingerstyleTab ?? '');
           setStrumPattern('');
           setCapoPosition(song.capo ?? 0);
-          setPlaybackSpeed(1.4); // ballad feel for the fingerstyle demos
+          setPlaybackSpeed(song.fingerstyleTab ? 1.4 : 1); // ballad feel for the demos
           setShowLoadModal(false);
           return;
       }
@@ -95,13 +99,19 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
           const chords = matches.map(c => c.replace(/[\[\]]/g, ''));
           setInputText(chords.join(' '));
           setInputMode('CHORDS');
-          if (song.strummingPattern) {
-              const fmt = song.strummingPattern.replace(/-/g, ' ').split('').join(' ');
-              setStrumPattern(fmt);
-          }
-          if (song.capo) setCapoPosition(song.capo);
+          setStrumPattern(song.strummingPattern
+              ? song.strummingPattern.replace(/-/g, ' ').split('').join(' ')
+              : '');
+          setCapoPosition(song.capo ?? 0);
+          setPlaybackSpeed(1);
       } else {
-          if(!initialSong) alert("No chords found in this song (look for [brackets]).");
+          // No chords and not fingerstyle: still reflect the opened song by clearing
+          // to an empty chord sheet rather than leaving the previous/default content.
+          setInputMode('CHORDS');
+          setInputText('');
+          setStrumPattern('');
+          setCapoPosition(song.capo ?? 0);
+          if (!initialSong) alert("No chords found in this song (look for [brackets]).");
       }
       setShowLoadModal(false);
   };

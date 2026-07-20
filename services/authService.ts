@@ -8,16 +8,19 @@ export const getCurrentUser = (): User | null => {
   return data ? JSON.parse(data) : null;
 };
 
-export const login = async (name: string, skillLevel: SkillLevel): Promise<User> => {
-  // Simple ID generation based on timestamp
-  const id = `user_${Date.now()}`;
-  
+export const login = async (name: string, skillLevel: SkillLevel, email?: string): Promise<User> => {
+  const normalizedEmail = email?.trim().toLowerCase() || undefined;
+  // Stable id derived from the email when present (so the same account restores
+  // its library across logins on this device), else a timestamp for guests.
+  const id = normalizedEmail ? `user_${normalizedEmail}` : `user_${Date.now()}`;
+
   const user: User = {
     id,
     name,
+    email: normalizedEmail,
     skillLevel,
     subscriptionStatus: 'active', // Default to active/premium for this version
-    trialEndDate: Date.now() + (365 * 24 * 60 * 60 * 1000), 
+    trialEndDate: Date.now() + (365 * 24 * 60 * 60 * 1000),
     isAdmin: false
   };
   localStorage.setItem(USER_KEY, JSON.stringify(user));

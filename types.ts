@@ -7,6 +7,8 @@ export type SkillLevel = 'Beginner' | 'Intermediate' | 'Advanced' | 'Professiona
 export interface User {
   id: string;
   name: string;
+  /** Email used as the account identity; namespaces the saved song library. */
+  email?: string;
   skillLevel: SkillLevel;
   subscriptionStatus: 'trial' | 'active' | 'expired';
   trialEndDate: number;

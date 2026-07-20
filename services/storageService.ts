@@ -1,7 +1,34 @@
 
-import { AppLanguage, Song } from '../types';
+import type { AppLanguage, Song } from '../types';
 
 const STORAGE_KEY = 'plectrum_songs_db';
+
+// The song library is namespaced per signed-in email so each account keeps its
+// own history on this device. With no email (guest) it uses the shared base key.
+let activeStorageKey = STORAGE_KEY;
+
+/** The localStorage key a given account's library lives under (pure/testable). */
+export const storageKeyForUser = (email?: string | null): string =>
+  email && email.trim() ? `${STORAGE_KEY}::${email.trim().toLowerCase()}` : STORAGE_KEY;
+
+/**
+ * Point the library at a specific account (by email), or null for the guest/base
+ * library. On an account's FIRST use, its library is seeded from whatever is in
+ * the base key so a user's existing local songs carry into their new account
+ * instead of vanishing. Safe to call repeatedly.
+ */
+export const setActiveUser = (email?: string | null): void => {
+  const key = storageKeyForUser(email);
+  if (key !== STORAGE_KEY) {
+    try {
+      if (localStorage.getItem(key) === null) {
+        const base = localStorage.getItem(STORAGE_KEY);
+        if (base) localStorage.setItem(key, base);
+      }
+    } catch { /* storage unavailable */ }
+  }
+  activeStorageKey = key;
+};
 
 // Original fingerstyle demo arrangement (Plectrum tab notation). NO copyrighted
 // lyrics. Played with Capo 5 at ~1.4x for the ballad feel. Moves through the
@@ -194,15 +221,15 @@ const withBuiltInDemos = (songs: Song[]): Song[] => {
 
 export const getSongs = (): Song[] => {
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
+    const data = localStorage.getItem(activeStorageKey);
     if (!data) {
         // Initialize with default + built-in demo songs if library is empty
         const normalizedDefaults = withBuiltInDemos(DEFAULT_SONGS).map(normalizeStoredSong);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedDefaults));
+        localStorage.setItem(activeStorageKey, JSON.stringify(normalizedDefaults));
         return normalizedDefaults;
     }
     const songs = withBuiltInDemos((JSON.parse(data) as Song[])).map(normalizeStoredSong);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(songs));
+    localStorage.setItem(activeStorageKey, JSON.stringify(songs));
     return songs;
   } catch (e) {
     console.error("Failed to load songs", e);
@@ -211,34 +238,34 @@ export const getSongs = (): Song[] => {
 };
 
 export const saveSong = (song: Song): void => {
-  const data = localStorage.getItem(STORAGE_KEY);
+  const data = localStorage.getItem(activeStorageKey);
   const allSongs: Song[] = data ? JSON.parse(data) : [];
   // Stamp the modification time so cloud sync can resolve conflicts (newest wins).
   const normalizedSong = normalizeStoredSong({ ...song, updatedAt: Date.now() });
 
   const existingIndex = allSongs.findIndex(s => s.id === normalizedSong.id);
-  
+
   if (existingIndex >= 0) {
     allSongs[existingIndex] = normalizedSong;
   } else {
     allSongs.push(normalizedSong);
   }
-  
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(allSongs));
+
+  localStorage.setItem(activeStorageKey, JSON.stringify(allSongs));
 };
 
 // Replace the whole library verbatim (used by cloud sync after a merge). Unlike
 // saveSong this does NOT re-stamp updatedAt — the merge already chose the correct
 // timestamps, and re-stamping would corrupt last-write-wins on the next sync.
 export const replaceLibrary = (songs: Song[]): void => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(songs.map(normalizeStoredSong)));
+  localStorage.setItem(activeStorageKey, JSON.stringify(songs.map(normalizeStoredSong)));
 };
 
 export const deleteSong = (id: string): void => {
-  const data = localStorage.getItem(STORAGE_KEY);
+  const data = localStorage.getItem(activeStorageKey);
   const allSongs: Song[] = data ? JSON.parse(data) : [];
   const updatedSongs = allSongs.filter(s => String(s.id) !== String(id));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSongs));
+  localStorage.setItem(activeStorageKey, JSON.stringify(updatedSongs));
 };
 
 export const findSongByTitle = (query: string, language?: AppLanguage): Song | undefined => {
