@@ -95,27 +95,28 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
       <head>
         <title>${safeTitle} - Plectrum</title>
         <style>
-          @page { size: A4; margin: 10mm; }
+          @page { size: A4; margin: 12mm; }
           * { box-sizing: border-box; }
           html, body { margin: 0; padding: 0; }
-          body { font-family: Arial, Helvetica, sans-serif; color: #211813; background: #ffffff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .sheet { position: relative; padding: 5mm; background: #fffaf2; border: 1.5px solid #d97706; border-radius: 6px; }
-          .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: end; padding: 9px 10px; margin-bottom: 9px; background: linear-gradient(135deg, #2d1b15 0%, #5d2f12 100%); border: 1px solid #d97706; border-radius: 5px; break-after: avoid; page-break-after: avoid; }
-          h1 { margin: 0; color: #fff7ed; font-size: 25px; line-height: 1.05; font-weight: 900; }
-          h2 { margin: 3px 0 0; color: #fbbf24; font-size: 13px; font-weight: 800; }
-          .meta { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 285px; font-size: 9.5px; color: #fff7ed; text-align: right; }
-          .pill { border: 1px solid rgba(251,191,36,0.55); background: rgba(255,247,237,0.1); border-radius: 5px; padding: 3px 6px; font-weight: 800; white-space: nowrap; }
-          .brand { width: 100%; color: #fbbf24; font-size: 8.5px; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
-          .content { position: relative; z-index: 1; display: grid; gap: 2px; }
-          .section { margin: 8px 0 3px; padding: 2px 0 3px; color: #b45309; border-bottom: 1.5px solid #f4c06a; font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; page-break-after: avoid; break-after: avoid; }
-          .song-line { display: grid; grid-template-columns: minmax(0,1fr) minmax(82px,25%); gap: 9px; align-items: baseline; min-height: 17px; padding: 2px 5px; border-bottom: 1px solid #f1dfc0; break-inside: avoid; page-break-inside: avoid; }
-          .song-line:nth-child(even) { background: #fff3dd; }
-          .lyric-line { font-size: 12px; line-height: 1.25; color: #211813; word-break: break-word; }
-          .chord-rail { display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 3px; min-width: 0; }
-          .chord-rail span { font-family: Consolas, 'Courier New', monospace; font-size: 10px; line-height: 1.05; font-weight: 900; color: #2d1b15; background: #fbbf24; border: 1px solid #d97706; border-radius: 4px; padding: 1px 4px; }
-          .spacer { height: 3px; }
-          .footer { display: flex; justify-content: space-between; margin-top: 8px; border-top: 1px solid #f4c06a; padding-top: 4px; color: #92400e; font-size: 8px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; background: #fffaf2; }
-          @media screen { body { background: #2d1b15; } .sheet { max-width: 210mm; min-height: 297mm; margin: 18px auto; padding: 10mm; box-shadow: 0 20px 70px rgba(0,0,0,0.3); } }
+          body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; color: #221912; background: #ffffff; -webkit-print-color-adjust: exact; print-color-adjust: exact; line-height: 1.5; }
+          .sheet { position: relative; padding: 9mm; background: #fffdf9; border: 1.5px solid #e0a044; border-radius: 8px; }
+          .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 18px; align-items: end; padding: 16px 18px; margin-bottom: 18px; background: linear-gradient(135deg, #2d1b15 0%, #5d2f12 100%); border-radius: 8px; break-after: avoid; page-break-after: avoid; }
+          h1 { margin: 0; color: #fff7ed; font-size: 27px; line-height: 1.12; font-weight: 800; letter-spacing: -0.01em; }
+          h2 { margin: 6px 0 0; color: #fbbf24; font-size: 14px; font-weight: 600; }
+          .meta { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 300px; font-size: 10px; color: #fff7ed; text-align: right; }
+          .pill { border: 1px solid rgba(251,191,36,0.5); background: rgba(255,247,237,0.08); border-radius: 6px; padding: 4px 9px; font-weight: 600; white-space: nowrap; }
+          .brand { width: 100%; color: #fbbf24; font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 3px; }
+          .content { position: relative; z-index: 1; display: grid; gap: 0; }
+          .section { margin: 20px 0 8px; padding-bottom: 5px; color: #b45309; border-bottom: 2px solid #f0c987; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; page-break-after: avoid; break-after: avoid; }
+          .section:first-child { margin-top: 0; }
+          .song-line { display: grid; grid-template-columns: minmax(0,1fr) minmax(90px,26%); gap: 16px; align-items: baseline; min-height: 24px; padding: 6px 8px; border-radius: 5px; break-inside: avoid; page-break-inside: avoid; }
+          .song-line:nth-child(even) { background: #fff6e6; }
+          .lyric-line { font-size: 14px; line-height: 1.55; color: #221912; word-break: break-word; }
+          .chord-rail { display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 5px; min-width: 0; }
+          .chord-rail span { font-family: 'Cascadia Mono', Consolas, 'SFMono-Regular', 'Courier New', monospace; font-size: 11px; line-height: 1.2; font-weight: 700; color: #2d1b15; background: #fcd34d; border: 1px solid #e0a044; border-radius: 5px; padding: 2px 7px; }
+          .spacer { height: 11px; }
+          .footer { display: flex; justify-content: space-between; margin-top: 18px; border-top: 1.5px solid #f0c987; padding-top: 8px; color: #92400e; font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+          @media screen { body { background: #2d1b15; } .sheet { max-width: 210mm; min-height: 297mm; margin: 18px auto; padding: 14mm; box-shadow: 0 20px 70px rgba(0,0,0,0.3); } }
         </style>
       </head>
       <body>
