@@ -6,6 +6,7 @@
 import { handleEmailAuth } from '../server/emailAuthHandler';
 import { neonUsersDB, ensureSchema, isDbConfigured } from '../server/db';
 import { signCloudToken } from '../server/cloudToken';
+import { hashPassword, verifyPassword } from '../server/password';
 
 export const config = { runtime: 'edge' };
 
@@ -26,7 +27,11 @@ export default async function handler(request: Request): Promise<Response> {
     const result = await handleEmailAuth(
       { action: body?.action, email: body?.email, password: body?.password },
       neonUsersDB,
-      (uid, email) => signCloudToken(uid, email, secret),
+      {
+        hashPassword,
+        verifyPassword,
+        makeToken: (uid, email) => signCloudToken(uid, email, secret),
+      },
     );
     return json(result.status, result.body);
   } catch (err) {

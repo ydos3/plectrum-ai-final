@@ -30,11 +30,13 @@ const makeDb = () => {
   return db;
 };
 const makeToken = async (uid: string, email: string) => `tok:${uid}:${email}`;
+// Real password fns injected into the handler (the module no longer imports them).
+const deps = { hashPassword, verifyPassword, makeToken };
 
 // ── signup ──
 {
   const db = makeDb();
-  const r = await handleEmailAuth({ action: 'signup', email: 'Yuval@Example.com', password: 'hunter2' }, db, makeToken);
+  const r = await handleEmailAuth({ action: 'signup', email: 'Yuval@Example.com', password: 'hunter2' }, db, deps);
   assert.equal(r.status, 200, 'signup ok');
   assert.equal((r.body as any).user.email, 'yuval@example.com', 'email normalized (lowercased)');
   assert.ok((r.body as any).token, 'token issued');
@@ -43,24 +45,24 @@ const makeToken = async (uid: string, email: string) => `tok:${uid}:${email}`;
 // ── duplicate signup rejected ──
 {
   const db = makeDb();
-  await handleEmailAuth({ action: 'signup', email: 'a@b.com', password: 'hunter2' }, db, makeToken);
-  const dup = await handleEmailAuth({ action: 'signup', email: 'a@b.com', password: 'hunter2' }, db, makeToken);
+  await handleEmailAuth({ action: 'signup', email: 'a@b.com', password: 'hunter2' }, db, deps);
+  const dup = await handleEmailAuth({ action: 'signup', email: 'a@b.com', password: 'hunter2' }, db, deps);
   assert.equal(dup.status, 409, 'duplicate email → 409');
 }
 
 // ── login: correct, wrong password, unknown user ──
 {
   const db = makeDb();
-  await handleEmailAuth({ action: 'signup', email: 'a@b.com', password: 'hunter2' }, db, makeToken);
+  await handleEmailAuth({ action: 'signup', email: 'a@b.com', password: 'hunter2' }, db, deps);
 
-  const ok = await handleEmailAuth({ action: 'login', email: 'A@B.com', password: 'hunter2' }, db, makeToken);
+  const ok = await handleEmailAuth({ action: 'login', email: 'A@B.com', password: 'hunter2' }, db, deps);
   assert.equal(ok.status, 200, 'correct login (case-insensitive email)');
   assert.ok((ok.body as any).token, 'login issues token');
 
-  const wrong = await handleEmailAuth({ action: 'login', email: 'a@b.com', password: 'wrongpass' }, db, makeToken);
+  const wrong = await handleEmailAuth({ action: 'login', email: 'a@b.com', password: 'wrongpass' }, db, deps);
   assert.equal(wrong.status, 401, 'wrong password → 401');
 
-  const unknown = await handleEmailAuth({ action: 'login', email: 'ghost@b.com', password: 'whatever' }, db, makeToken);
+  const unknown = await handleEmailAuth({ action: 'login', email: 'ghost@b.com', password: 'whatever' }, db, deps);
   assert.equal(unknown.status, 401, 'unknown user → 401 (same generic message)');
   assert.equal((wrong.body as any).error, (unknown.body as any).error, 'no user-enumeration leak');
 }
@@ -68,9 +70,9 @@ const makeToken = async (uid: string, email: string) => `tok:${uid}:${email}`;
 // ── validation ──
 {
   const db = makeDb();
-  assert.equal((await handleEmailAuth({ action: 'signup', email: 'notanemail', password: 'hunter2' }, db, makeToken)).status, 400, 'bad email → 400');
-  assert.equal((await handleEmailAuth({ action: 'signup', email: 'a@b.com', password: '123' }, db, makeToken)).status, 400, 'short password → 400');
-  assert.equal((await handleEmailAuth({ action: 'frobnicate', email: 'a@b.com', password: 'hunter2' }, db, makeToken)).status, 400, 'unknown action → 400');
+  assert.equal((await handleEmailAuth({ action: 'signup', email: 'notanemail', password: 'hunter2' }, db, deps)).status, 400, 'bad email → 400');
+  assert.equal((await handleEmailAuth({ action: 'signup', email: 'a@b.com', password: '123' }, db, deps)).status, 400, 'short password → 400');
+  assert.equal((await handleEmailAuth({ action: 'frobnicate', email: 'a@b.com', password: 'hunter2' }, db, deps)).status, 400, 'unknown action → 400');
 }
 
 // ── session token round-trip (the real signer used in production) ──

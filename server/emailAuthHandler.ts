@@ -4,8 +4,6 @@
 // tested headlessly with a fake DB (scripts/test-email-auth.ts). The Edge function
 // (api/auth-email.ts) supplies a Neon-backed UsersDB + a real JWT signer.
 
-import { hashPassword, verifyPassword } from './password.ts';
-
 export interface CloudUser {
   id: string;
   email: string;
@@ -31,11 +29,23 @@ export interface AuthResult {
 /** Issues a session token for a user id + email (async to allow real signing). */
 export type TokenMaker = (uid: string, email: string) => Promise<string>;
 
+/**
+ * Crypto + token dependencies, injected so this module has no runtime import of
+ * the password/JWT code — that keeps it trivially unit-testable AND avoids a
+ * `.ts`-extension import the Vercel Edge bundler rejects.
+ */
+export interface AuthDeps {
+  hashPassword: (password: string) => Promise<string>;
+  verifyPassword: (password: string, stored: string) => Promise<boolean>;
+  makeToken: TokenMaker;
+}
+
 const normalizeEmail = (e: string) => e.trim().toLowerCase();
 const isEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 const MIN_PASSWORD = 6;
 
-export const handleEmailAuth = async (req: AuthRequest, db: UsersDB, makeToken: TokenMaker): Promise<AuthResult> => {
+export const handleEmailAuth = async (req: AuthRequest, db: UsersDB, deps: AuthDeps): Promise<AuthResult> => {
+  const { hashPassword, verifyPassword, makeToken } = deps;
   const email = typeof req.email === 'string' ? normalizeEmail(req.email) : '';
   const password = typeof req.password === 'string' ? req.password : '';
 
