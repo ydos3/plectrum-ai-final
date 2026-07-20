@@ -9,10 +9,12 @@ export interface SessionUser {
   image?: string | null;
 }
 
-/** True only when the app was built with cloud sync enabled. */
+/** True only when the app was built with cloud sync enabled. Tolerant of stray
+ *  BOM / whitespace / escape junk that env tooling sometimes prepends/appends. */
 export const cloudSyncEnabled = (): boolean => {
-  const v = (import.meta as any).env?.VITE_CLOUD_SYNC;
-  return v === '1' || v === 'true';
+  const raw = (import.meta as any).env?.VITE_CLOUD_SYNC;
+  const v = String(raw ?? '').replace(/^﻿/, '').replace(/\\[rn]/g, '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'on' || v === 'yes';
 };
 
 /** Returns the signed-in user, or null if not signed in / sync disabled. */

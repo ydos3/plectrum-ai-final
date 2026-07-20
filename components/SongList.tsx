@@ -89,6 +89,9 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
     const safeTitle = escapeHtml(song.title);
     const safeArtist = escapeHtml(song.artist);
     const generatedOn = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    // Watercolor art (public/sheet-bg.png) as a full-bleed background, frosted with
+    // a translucent "glass" scrim so the lyrics/tabs stay perfectly readable.
+    const bgUrl = `${window.location.origin}/sheet-bg.png`;
 
     printWindow.document.write(`
       <html>
@@ -99,8 +102,12 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
           * { box-sizing: border-box; }
           html, body { margin: 0; padding: 0; }
           body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; color: #221912; background: #ffffff; -webkit-print-color-adjust: exact; print-color-adjust: exact; line-height: 1.5; }
-          .sheet { position: relative; padding: 9mm; background: #fffdf9; border: 1.5px solid #e0a044; border-radius: 8px; }
-          .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 18px; align-items: end; padding: 16px 18px; margin-bottom: 18px; background: linear-gradient(135deg, #2d1b15 0%, #5d2f12 100%); border-radius: 8px; break-after: avoid; page-break-after: avoid; }
+          /* Watercolor art fills the sheet; a frosted "glass" scrim (::before) sits
+             over it so text stays readable while the art shows through softly. */
+          .sheet { position: relative; padding: 9mm; border: 1.5px solid rgba(224,160,68,0.55); border-radius: 10px; overflow: hidden; background-image: url('${bgUrl}'); background-size: cover; background-position: center; background-repeat: no-repeat; }
+          .sheet::before { content: ''; position: absolute; inset: 0; background: rgba(255,251,243,0.82); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); z-index: 0; }
+          .header, .content, .footer { position: relative; z-index: 1; }
+          .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 18px; align-items: end; padding: 16px 18px; margin-bottom: 18px; background: linear-gradient(135deg, rgba(45,27,21,0.96) 0%, rgba(93,47,18,0.94) 100%); border-radius: 8px; box-shadow: 0 6px 20px rgba(45,27,21,0.28); break-after: avoid; page-break-after: avoid; }
           h1 { margin: 0; color: #fff7ed; font-size: 27px; line-height: 1.12; font-weight: 800; letter-spacing: -0.01em; }
           h2 { margin: 6px 0 0; color: #fbbf24; font-size: 14px; font-weight: 600; }
           .meta { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 300px; font-size: 10px; color: #fff7ed; text-align: right; }
@@ -110,7 +117,7 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
           .section { margin: 20px 0 8px; padding-bottom: 5px; color: #b45309; border-bottom: 2px solid #f0c987; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; page-break-after: avoid; break-after: avoid; }
           .section:first-child { margin-top: 0; }
           .song-line { display: grid; grid-template-columns: minmax(0,1fr) minmax(90px,26%); gap: 16px; align-items: baseline; min-height: 24px; padding: 6px 8px; border-radius: 5px; break-inside: avoid; page-break-inside: avoid; }
-          .song-line:nth-child(even) { background: #fff6e6; }
+          .song-line:nth-child(even) { background: rgba(255,255,255,0.42); }
           .lyric-line { font-size: 14px; line-height: 1.55; color: #221912; word-break: break-word; }
           .chord-rail { display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 5px; min-width: 0; }
           .chord-rail span { font-family: 'Cascadia Mono', Consolas, 'SFMono-Regular', 'Courier New', monospace; font-size: 11px; line-height: 1.2; font-weight: 700; color: #2d1b15; background: #fcd34d; border: 1px solid #e0a044; border-radius: 5px; padding: 2px 7px; }
@@ -141,7 +148,14 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
           </div>
         </div>
         <script>
-          window.addEventListener('load', () => setTimeout(() => window.print(), 100));
+          // Wait for the background art to load before printing so it appears in
+          // the PDF; print once (guarded), with a fallback if the image is slow/blocked.
+          var printed = false;
+          function go(){ if (printed) return; printed = true; setTimeout(function(){ window.print(); }, 150); }
+          var bg = new Image();
+          bg.onload = go; bg.onerror = go;
+          bg.src = ${JSON.stringify(bgUrl)};
+          window.addEventListener('load', function(){ setTimeout(go, 1200); });
         </script>
       </body>
       </html>
