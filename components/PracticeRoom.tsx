@@ -888,7 +888,9 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
                 <h3 className="font-black text-amber-500 uppercase tracking-[0.15em] text-[10px] flex items-center gap-2">
                     <List className="w-3.5 h-3.5" /> Teleprompter
                 </h3>
-                <button onClick={() => setShowSongSelector(true)} className="text-[10px] font-black text-amber-200/50 hover:text-amber-300 uppercase tracking-widest underline transition-colors">Change Track</button>
+                <button onClick={() => setShowSongSelector(true)} title="Change track" className="flex items-center gap-1.5 text-[10px] font-black text-amber-950 bg-amber-500 hover:bg-amber-400 uppercase tracking-widest px-3 py-1.5 rounded-lg shadow-md transition-colors active:scale-95">
+                    <List className="w-3.5 h-3.5" /> {selectedSong ? 'Change Track' : 'Choose Track'}
+                </button>
               </div>
 
               {selectedSong && (
@@ -907,7 +909,7 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
                          </button>
                      </div>
                      <div className="flex items-center gap-3">
-                        <input type="range" min="0.5" max="3" step="0.01" value={scrollSpeed} onChange={e => setScrollSpeed(clampNumber(e.target.value, 1, 0.5, 3))} aria-label="Scroll speed" className="w-full h-1 bg-slate-800 rounded-lg accent-amber-500 cursor-pointer" />
+                        <input type="range" min="0.5" max="3" step="0.05" value={scrollSpeed} onChange={e => setScrollSpeed(clampNumber(e.target.value, 1, 0.5, 3))} aria-label="Scroll speed" className="w-full h-1 bg-slate-800 rounded-lg accent-amber-500 cursor-pointer" />
                         <span className="w-12 text-right text-[10px] font-black text-amber-400 tabular-nums">{formatSpeed(scrollSpeed)}x</span>
                      </div>
                 </div>
@@ -932,8 +934,8 @@ const PracticeRoom: React.FC<PracticeRoomProps> = ({ isTourMode = false, initial
                       <div className="p-6 rounded-full bg-amber-950/10 border-2 border-dashed border-amber-900/20">
                         <Music className="w-10 h-10 opacity-30" />
                       </div>
-                      <p className="font-black uppercase tracking-widest text-[10px]">No Track Loaded</p>
-                      <button onClick={() => setShowSongSelector(true)} className="px-6 py-2 bg-[#2d1b15] border border-[#5d4037] text-amber-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#3e2723] transition-all">Select</button>
+                      <p className="font-black uppercase tracking-widest text-[10px] text-amber-500/70">No Track Loaded</p>
+                      <button onClick={() => setShowSongSelector(true)} className="flex items-center gap-2 px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-amber-950 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg active:scale-95"><List className="w-4 h-4" /> Choose a song</button>
                   </div>
               )}
           </div>

@@ -36,6 +36,9 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isStrumming, setIsStrumming] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
+  // Account/settings drawer (language, cloud sign-in, sign out, legal) collapsed
+  // by default so the nav features get the space and are always visible.
+  const [showSettings, setShowSettings] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(() => {
     try { return localStorage.getItem('plectrum_nav_collapsed') === '1'; } catch { return false; }
   });
@@ -208,20 +211,15 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             <ChevronLeft className="w-5 h-5" />
           </button>
 
-          {/* Logo Section */}
-          <div className="p-8 border-b border-[#5d4037] relative z-10 bg-[#1a0f0a]/60 text-center cursor-pointer group select-none overflow-visible" onClick={handleLogoClick}>
-            <div className={`relative w-full flex items-center justify-center mb-4 transition-transform duration-100 ${isStrumming ? 'scale-95 rotate-1' : 'group-hover:scale-105'}`}>
-              <PlectrumLogo className="w-32 h-32" animate={isStrumming} />
-            </div>
-            {/* Logo Text */}
-            <h1 className="font-cursive text-5xl text-amber-100 tracking-wide text-shadow-lg px-2">
-              Plectrum
-            </h1>
+          {/* Logo Section — compact row so the nav gets the vertical space */}
+          <div className="flex items-center gap-2.5 px-4 py-3 pr-11 border-b border-[#5d4037] relative z-10 bg-[#1a0f0a]/60 cursor-pointer group select-none" onClick={handleLogoClick}>
+            <PlectrumLogo className={`w-9 h-9 shrink-0 transition-transform duration-100 ${isStrumming ? 'scale-95 rotate-1' : 'group-hover:scale-110'}`} animate={isStrumming} />
+            <h1 className="font-cursive text-3xl text-amber-100 leading-none text-shadow-lg">Plectrum</h1>
           </div>
 
-          <nav className="flex-1 p-6 overflow-y-auto relative z-10 custom-scrollbar">
-            <div className="mb-8">
-              <h3 className="px-4 text-[10px] font-black text-amber-800 uppercase tracking-widest mb-4 flex items-center gap-2 font-display">
+          <nav className="flex-1 px-4 py-4 overflow-y-auto relative z-10 custom-scrollbar">
+            <div className="mb-5">
+              <h3 className="px-4 text-[10px] font-black text-amber-800 uppercase tracking-widest mb-2.5 flex items-center gap-2 font-display">
                 <span className="w-6 h-[1px] bg-amber-800/50"></span>
                 Collections
               </h3>
@@ -229,8 +227,8 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
               <NavItem id="nav-composer" view="EDITOR" icon={PlusCircle} label="Composer" soundIndex={1} />
             </div>
 
-            <div className="mb-8">
-              <h3 className="px-4 text-[10px] font-black text-amber-800 uppercase tracking-widest mb-4 flex items-center gap-2 font-display">
+            <div className="mb-5">
+              <h3 className="px-4 text-[10px] font-black text-amber-800 uppercase tracking-widest mb-2.5 flex items-center gap-2 font-display">
                 <span className="w-6 h-[1px] bg-amber-800/50"></span>
                 Studio
               </h3>
@@ -243,56 +241,68 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             </div>
           </nav>
 
-          <div className="p-4 border-t border-[#5d4037] relative z-10 bg-[#1a0f0a]/40 space-y-3">
-            {/* Language Selector */}
-            <div className="relative">
-              <button
-                onClick={() => setShowLangMenu(!showLangMenu)}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#3e2723] text-amber-200 text-xs font-bold border border-[#5d4037]"
-              >
-                <div className="flex items-center gap-2">
-                  <Globe className="w-3 h-3" /> {selectedLanguage}
-                </div>
-                <div className="text-[9px] text-amber-500">▼</div>
-              </button>
-
-              {showLangMenu && (
-                <div className="absolute bottom-full left-0 w-full bg-[#1a0f0a] border border-[#5d4037] rounded-lg max-h-48 overflow-y-auto shadow-xl z-50 mb-1">
-                  {SUPPORTED_LANGUAGES.map(lang => (
-                    <button
-                      key={lang}
-                      onClick={() => { onLanguageChange(lang); setShowLangMenu(false); }}
-                      className="w-full text-left px-3 py-2 text-xs text-amber-200 hover:bg-[#2d1b15] hover:text-white"
-                    >
-                      {lang}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-gradient-to-b from-[#3e2723] to-[#2d1b15] border border-[#5d4037] shadow-inner">
+          <div className="border-t border-[#5d4037] relative z-10 bg-[#1a0f0a]/50">
+            {/* Account row — always visible (just the name); taps to expand settings. */}
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowSettings(s => !s); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.04] transition-colors"
+              aria-expanded={showSettings}
+              title={showSettings ? 'Hide account & settings' : 'Account & settings'}
+            >
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-600 to-amber-800 border border-amber-900/50 flex items-center justify-center shrink-0">
                 <UserIcon className="w-4 h-4 text-amber-100" />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-bold text-amber-100 truncate">{user?.name || 'Guest'}</p>
-                <p className="text-[9px] text-amber-500/80 truncate font-medium capitalize">Premium Member</p>
+                <p className="text-[9px] text-amber-500/80 truncate font-medium">Account &amp; settings</p>
               </div>
-            </div>
-
-            {/* Optional cloud sync — renders nothing unless VITE_CLOUD_SYNC is on. */}
-            <CloudSyncPanel />
-
-            <button onClick={(e) => { e.stopPropagation(); handleLogout(); }} className="w-full flex items-center justify-center gap-2 text-xs text-amber-600 hover:text-red-400 transition-colors">
-              <LogOut className="w-3 h-3" /> Sign Out
+              <ChevronRight className={`w-4 h-4 text-amber-500/70 shrink-0 transition-transform ${showSettings ? '-rotate-90' : 'rotate-90'}`} />
             </button>
-            <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px] text-amber-700/80 no-global-click">
-              <a href="/terms/" className="hover:text-amber-300 transition-colors">Terms</a>
-              <a href="/privacy/" className="hover:text-amber-300 transition-colors">Privacy</a>
-              <a href="/copyright/" className="hover:text-amber-300 transition-colors">Copyright</a>
-              <a href="/ai-disclosure/" className="hover:text-amber-300 transition-colors">AI Disclosure</a>
-            </div>
+
+            {/* Collapsible drawer: language, cloud sign-in/sync, sign out, legal. */}
+            {showSettings && (
+              <div className="px-4 pb-4 pt-1 space-y-3 border-t border-[#5d4037]/50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                {/* Language Selector */}
+                <div className="relative">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowLangMenu(!showLangMenu); }}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#3e2723] text-amber-200 text-xs font-bold border border-[#5d4037]"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-3 h-3" /> {selectedLanguage}
+                    </div>
+                    <div className="text-[9px] text-amber-500">▼</div>
+                  </button>
+
+                  {showLangMenu && (
+                    <div className="absolute bottom-full left-0 w-full bg-[#1a0f0a] border border-[#5d4037] rounded-lg max-h-48 overflow-y-auto shadow-xl z-50 mb-1">
+                      {SUPPORTED_LANGUAGES.map(lang => (
+                        <button
+                          key={lang}
+                          onClick={() => { onLanguageChange(lang); setShowLangMenu(false); }}
+                          className="w-full text-left px-3 py-2 text-xs text-amber-200 hover:bg-[#2d1b15] hover:text-white"
+                        >
+                          {lang}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional cloud sync — renders nothing unless VITE_CLOUD_SYNC is on. */}
+                <CloudSyncPanel />
+
+                <button onClick={(e) => { e.stopPropagation(); handleLogout(); }} className="w-full flex items-center justify-center gap-2 text-xs text-amber-600 hover:text-red-400 transition-colors">
+                  <LogOut className="w-3 h-3" /> Sign Out
+                </button>
+                <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px] text-amber-700/80 no-global-click">
+                  <a href="/terms/" className="hover:text-amber-300 transition-colors">Terms</a>
+                  <a href="/privacy/" className="hover:text-amber-300 transition-colors">Privacy</a>
+                  <a href="/copyright/" className="hover:text-amber-300 transition-colors">Copyright</a>
+                  <a href="/ai-disclosure/" className="hover:text-amber-300 transition-colors">AI Disclosure</a>
+                </div>
+              </div>
+            )}
           </div>
         </aside>
       )}

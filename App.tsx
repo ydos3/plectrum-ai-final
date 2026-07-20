@@ -18,6 +18,7 @@ import { Song, ViewState, User, AppLanguage, SkillLevel } from './types';
 import { getCurrentUser, login } from './services/authService';
 import { playNextGlobalLoopChord, resumeAudio } from './services/audioService';
 import { getSongs, setActiveUser } from './services/storageService';
+import { startAutoSync } from './services/cloudSync';
 import { ArrowRight, Clock, Thermometer } from 'lucide-react';
 import PlectrumLogo from './components/PlectrumLogo';
 import { Star, Music2, Crown } from 'lucide-react';
@@ -65,8 +66,10 @@ const readSessionAppState = (): PersistedAppState => {
     }
 };
 
+// Only the teleprompter strictly needs a song. Practice Room opens with an empty
+// state (pick/search a track from inside), so it must be reachable song-less.
 const viewNeedsSong = (view?: ViewState) => (
-    view === 'TELEPROMPTER' || view === 'PRACTICE_ROOM'
+    view === 'TELEPROMPTER'
 );
 
 const isAppHistoryState = (state: unknown): state is AppHistoryState => (
@@ -337,6 +340,10 @@ const App: React.FC = () => {
             setShowTour(true);
         }
     };
+
+    // Wire automatic cloud sync once (no-op unless VITE_CLOUD_SYNC + signed in).
+    // Every edit then pushes on a debounce and pulls on load — no manual Save/Sync.
+    useEffect(() => { startAutoSync(); }, []);
 
     const goBack = () => navigateTo('LIBRARY', { push: false, clearEditorState: false });
 

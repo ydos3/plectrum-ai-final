@@ -17,6 +17,12 @@ export const storageKeyForUser = (email?: string | null): string =>
  * the base key so a user's existing local songs carry into their new account
  * instead of vanishing. Safe to call repeatedly.
  */
+// Fired after any local library mutation (save/delete) so cloud auto-sync can
+// push in the background — no manual "Sync" needed. Set by cloudSync.startAutoSync.
+let changeListener: (() => void) | null = null;
+export const setSongsChangeListener = (fn: (() => void) | null): void => { changeListener = fn; };
+const notifyChanged = () => { try { changeListener?.(); } catch { /* never let sync break a save */ } };
+
 export const setActiveUser = (email?: string | null): void => {
   const key = storageKeyForUser(email);
   if (key !== STORAGE_KEY) {
@@ -252,6 +258,7 @@ export const saveSong = (song: Song): void => {
   }
 
   localStorage.setItem(activeStorageKey, JSON.stringify(allSongs));
+  notifyChanged();
 };
 
 // Replace the whole library verbatim (used by cloud sync after a merge). Unlike
@@ -266,6 +273,7 @@ export const deleteSong = (id: string): void => {
   const allSongs: Song[] = data ? JSON.parse(data) : [];
   const updatedSongs = allSongs.filter(s => String(s.id) !== String(id));
   localStorage.setItem(activeStorageKey, JSON.stringify(updatedSongs));
+  notifyChanged();
 };
 
 export const findSongByTitle = (query: string, language?: AppLanguage): Song | undefined => {

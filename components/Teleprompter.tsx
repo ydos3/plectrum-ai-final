@@ -1737,12 +1737,12 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
              
              {/* Playback Speed Control */}
              <div className="flex items-center gap-1 md:gap-2 px-1.5 md:px-4 border-r border-white/[0.06] pr-2 md:pr-6">
-                 <button onClick={() => updateFooterSpeed(-0.1)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
+                 <button onClick={() => updateFooterSpeed(-0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
                  <div className="flex flex-col items-center w-12 md:w-16">
-                    <span className="text-lg md:text-2xl font-bold text-blue-400">{footerSpeed.toFixed(2).replace(/0$/, '')}x</span>
+                    <span className="text-lg md:text-2xl font-bold text-blue-400">{footerSpeed.toFixed(2)}x</span>
                     <span className="text-[8px] text-gray-400 uppercase tracking-widest font-bold">{footerSpeedLabel}</span>
                  </div>
-                 <button onClick={() => updateFooterSpeed(0.1)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Plus className="w-4 h-4"/></button>
+                 <button onClick={() => updateFooterSpeed(0.05)} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Plus className="w-4 h-4"/></button>
              </div>
              
              <button onClick={handlePlayPause} className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-2xl transition-all transform active:scale-90 border-2 ${

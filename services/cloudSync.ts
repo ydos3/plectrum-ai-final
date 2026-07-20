@@ -4,10 +4,15 @@
 // truth offline — this is the "keep local + optional cloud sync" model.
 
 import type { Song } from '../types';
-import { getSongs, replaceLibrary } from './storageService';
+import { getSongs, replaceLibrary, setSongsChangeListener } from './storageService';
 import { mergeLibraries, syncable } from './songSync';
 import { cloudSyncEnabled } from './authClient';
 import { cloudAuthHeader, isCloudSignedIn } from './emailAuth';
+
+export type SyncStatus = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
+let statusListener: ((s: SyncStatus) => void) | null = null;
+export const setSyncStatusListener = (fn: ((s: SyncStatus) => void) | null): void => { statusListener = fn; };
+const setStatus = (s: SyncStatus) => { try { statusListener?.(s); } catch { /* ignore */ } };
 
 export interface SyncOutcome {
   pulled: number;   // songs that came from the cloud into the merged library
@@ -56,4 +61,56 @@ export const syncNow = async (): Promise<SyncOutcome> => {
   const pulled = syncable(merged).filter(s => remoteIds.has(s.id) && !local.some(l => l.id === s.id)).length;
 
   return { pulled, pushed, total: syncable(merged).length };
+};
+
+// ─── Automatic background sync ───────────────────────────────────────────────
+// No manual "Save"/"Sync": every local edit schedules a debounced push, and we
+// pull on start. syncNow's replaceLibrary write does NOT re-fire this (only
+// saveSong/deleteSong notify), so there is no loop.
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let inFlight = false;
+let queued = false;
+let started = false;
+
+const runSyncGuarded = async (): Promise<void> => {
+  if (!cloudSyncEnabled() || !isCloudSignedIn()) return;
+  if (inFlight) { queued = true; return; }
+  inFlight = true;
+  setStatus('saving');
+  try {
+    await syncNow();
+    setStatus('saved');
+  } catch (e: any) {
+    setStatus(e?.message === 'not signed in' ? 'idle' : 'error');
+  } finally {
+    inFlight = false;
+    if (queued) { queued = false; void runSyncGuarded(); }
+  }
+};
+
+/** Debounced auto-sync trigger — safe to call on every edit. */
+export const scheduleAutoSync = (delayMs = 1500): void => {
+  if (!cloudSyncEnabled() || !isCloudSignedIn()) return;
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => { void runSyncGuarded(); }, delayMs);
+};
+
+/** Force an immediate sync (e.g. right after sign-in, or before unload). */
+export const syncNowSafe = (): Promise<void> => runSyncGuarded();
+
+/**
+ * Wire automatic sync once, at app start. Pulls immediately (if signed in),
+ * pushes local edits on a debounce, and flushes on tab close.
+ */
+export const startAutoSync = (): void => {
+  if (started || !cloudSyncEnabled()) return;
+  started = true;
+  setSongsChangeListener(() => scheduleAutoSync());
+  if (typeof window !== 'undefined') {
+    // Best-effort flush of pending edits before the tab closes.
+    window.addEventListener('pagehide', () => { if (isCloudSignedIn()) void runSyncGuarded(); });
+    window.addEventListener('online', () => { if (isCloudSignedIn()) void runSyncGuarded(); });
+  }
+  // Initial reconcile on load.
+  void runSyncGuarded();
 };

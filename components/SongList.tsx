@@ -98,13 +98,16 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
       <head>
         <title>${safeTitle} - Plectrum</title>
         <style>
-          @page { size: A4; margin: 12mm; }
+          /* No browser page margin — the artwork must bleed to every edge. */
+          @page { size: A4; margin: 0; }
           * { box-sizing: border-box; }
           html, body { margin: 0; padding: 0; }
-          body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; color: #221912; background: #ffffff; -webkit-print-color-adjust: exact; print-color-adjust: exact; line-height: 1.5; }
-          /* Watercolor art fills the sheet; a frosted "glass" scrim (::before) sits
-             over it so text stays readable while the art shows through softly. */
-          .sheet { position: relative; padding: 9mm; border: 1.5px solid rgba(224,160,68,0.55); border-radius: 10px; overflow: hidden; background-image: url('${bgUrl}'); background-size: cover; background-position: center; background-repeat: no-repeat; }
+          body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif; color: #221912; background: #fffdf9; -webkit-print-color-adjust: exact; print-color-adjust: exact; line-height: 1.5; }
+          /* Each .sheet IS a full A4 page: the watercolor art covers it top-to-bottom
+             (min-height forces full coverage even for short songs — this fixes the
+             white lower half). A frosted scrim (::before) keeps text readable. Safe
+             content margin lives in the padding so nothing is clipped at the edge. */
+          .sheet { position: relative; width: 210mm; min-height: 297mm; padding: 15mm 14mm; overflow: hidden; background-image: url('${bgUrl}'); background-size: cover; background-position: center; background-repeat: no-repeat; }
           .sheet::before { content: ''; position: absolute; inset: 0; background: rgba(255,250,240,0.42); -webkit-backdrop-filter: blur(1.5px); backdrop-filter: blur(1.5px); z-index: 0; }
           .header, .content, .footer { position: relative; z-index: 1; }
           .header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 18px; align-items: end; padding: 16px 18px; margin-bottom: 18px; background: linear-gradient(135deg, rgba(45,27,21,0.96) 0%, rgba(93,47,18,0.94) 100%); border-radius: 8px; box-shadow: 0 6px 20px rgba(45,27,21,0.28); break-after: avoid; page-break-after: avoid; }
