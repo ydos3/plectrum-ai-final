@@ -5,7 +5,7 @@ import { playStrum, playNote, resumeAudio, stopAllAudio, setResonance } from '..
 import { ParticleField } from '../services/particleField';
 import { resolvePluckNote } from '../services/airStrumDetector';
 import { StrumEngine } from '../services/airStrumEngine';
-import { createHandTracker, HandTracker } from '../services/handTracking';
+import { warmUpHandTracker, HandTracker } from '../services/handTracking';
 
 interface AirStrumProps {
   onBack?: () => void;
@@ -105,21 +105,22 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     };
   }, []);
 
-  // Preload the MediaPipe hand tracker the moment the page opens, so the ~model
-  // download overlaps with reading the intro / granting camera permission and
-  // the experience starts fast. Motion fallback covers the gap; tracker is reused
-  // across camera stop/start and closed on unmount.
+  // Attach the shared MediaPipe hand tracker. It's a session-wide singleton that
+  // may already be downloading/ready (warmed up when the user reached for the Air
+  // Strum nav — see Layout), so this usually resolves instantly. Motion fallback
+  // covers any gap. We do NOT close it on unmount — keeping it warm makes re-opening
+  // Air Strum instant; it lives for the session.
   useEffect(() => {
     let cancelled = false;
     setHandTrackingLoading(true);
-    createHandTracker().then(tracker => {
-      if (cancelled) { tracker?.close(); return; }
+    warmUpHandTracker().then(tracker => {
+      if (cancelled) return;
       setHandTrackingLoading(false);
       if (tracker) { trackerRef.current = tracker; setHandTrackingOn(true); }
     }).catch(() => { if (!cancelled) setHandTrackingLoading(false); });
     return () => {
       cancelled = true;
-      if (trackerRef.current) { trackerRef.current.close(); trackerRef.current = null; }
+      trackerRef.current = null;
     };
   }, []);
 

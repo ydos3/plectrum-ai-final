@@ -6,7 +6,7 @@ import { getChordFingering, getAllChords } from '../services/chordService';
 import { playStrum, playNote, playPercussion, resumeAudio, stopAllAudio } from '../services/audioService';
 import { getSongs } from '../services/storageService';
 import { parseFingerstyleTab } from '../services/tabParser';
-import { Play, Pause, Square, Hand, Zap, RotateCcw, FolderOpen, Plus, Minus, Activity, Info, Trash2, ArrowLeft } from 'lucide-react';
+import { Play, Pause, Square, Hand, Zap, RotateCcw, FolderOpen, Plus, Minus, Activity, Info, Trash2, ArrowLeft, Search } from 'lucide-react';
 
 type InputMode = 'CHORDS' | 'FINGERSTYLE';
 
@@ -68,6 +68,7 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
   
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [songs, setSongs] = useState<Song[]>([]);
+  const [librarySearch, setLibrarySearch] = useState('');
 
   // Refs for loop control to avoid state closure traps
   const playbackTimeout = useRef<number | null>(null);
@@ -466,14 +467,35 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
                            </button>
                        </div>
                    </div>
+                   <div className="px-3 pt-3 pb-2 border-b border-[#3e2723] bg-[#2d1b15]">
+                       <h4 className="text-xs font-bold text-amber-600 uppercase pb-2">Your Library</h4>
+                       <div className="relative">
+                           <Search className="w-4 h-4 text-amber-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                           <input
+                               type="text"
+                               value={librarySearch}
+                               onChange={e => setLibrarySearch(e.target.value)}
+                               placeholder="Search your songs…"
+                               className="w-full bg-[#1a0f0a] border border-[#5d4037] focus:border-amber-500 rounded-lg pl-9 pr-3 py-2 text-sm text-amber-100 outline-none placeholder-amber-800"
+                           />
+                       </div>
+                   </div>
                    <div className="p-2 overflow-y-auto">
-                       <h4 className="text-xs font-bold text-amber-600 uppercase px-2 py-2">Your Library</h4>
-                       {songs.map(song => (
-                           <button key={song.id} onClick={() => loadSongIntoLab(song)} className="w-full p-3 hover:bg-[#2d1b15] text-left border-b border-[#2d1b15] group">
-                               <div className="text-amber-200 font-bold group-hover:text-white">{song.title}</div>
-                               <div className="text-xs text-amber-700">{song.artist}</div>
-                           </button>
-                       ))}
+                       {(() => {
+                           const q = librarySearch.trim().toLowerCase();
+                           const filtered = q
+                               ? songs.filter(s => `${s.title} ${s.artist} ${s.movie || ''} ${s.collection || ''}`.toLowerCase().includes(q))
+                               : songs;
+                           if (filtered.length === 0) {
+                               return <div className="px-3 py-6 text-center text-sm text-amber-700">No songs match “{librarySearch}”.</div>;
+                           }
+                           return filtered.map(song => (
+                               <button key={song.id} onClick={() => loadSongIntoLab(song)} className="w-full p-3 hover:bg-[#2d1b15] text-left border-b border-[#2d1b15] group">
+                                   <div className="text-amber-200 font-bold group-hover:text-white">{song.title}</div>
+                                   <div className="text-xs text-amber-700">{song.artist}</div>
+                               </button>
+                           ));
+                       })()}
                    </div>
                </div>
            </div>

@@ -24,6 +24,20 @@ const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/w
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const INDEX_FINGERTIP = 8;
 
+// A process-wide singleton so the (heavy) model + WASM download happens at most
+// once per session and can be started BEFORE Air Strum opens (see warmUpHandTracker).
+let sharedTrackerPromise: Promise<HandTracker | null> | null = null;
+
+/**
+ * Kick off (or reuse) loading the hand tracker. Call this on intent — e.g. when
+ * the user hovers/taps the Air Strum nav — so the model is already downloading by
+ * the time the screen mounts, making it feel near-instant. Cheap to call repeatedly.
+ */
+export const warmUpHandTracker = (): Promise<HandTracker | null> => {
+  if (!sharedTrackerPromise) sharedTrackerPromise = createHandTracker();
+  return sharedTrackerPromise;
+};
+
 export const createHandTracker = async (): Promise<HandTracker | null> => {
   try {
     // Variable specifier keeps the bundler/TS from statically resolving it.

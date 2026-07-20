@@ -23,13 +23,24 @@ const STRING_MAP: Record<string, number> = {
  * - s / slide: Slide into the next note
  * - slap: Percussive hit
  * - Empty tokens from "--" or "---": short rests
+ * - (parenthetical text): comments/annotations — stripped, so tabs can carry
+ *   notes like "(CHORD SHAPE: A3-D2-G2)" or "Slap(playing d & g)" and still load.
+ * - Line breaks act as sequential separators, so multi-line tabs keep every note.
  */
 export const parseFingerstyleTab = (input: string): TabFrame[] => {
   // Keep delimiters while removing accidental spacing around them.
   const cleanInput = input
+    // Drop parenthetical annotations first — otherwise their inner hyphens/words
+    // get parsed as phantom notes (e.g. the D2/G2 in "(CHORD SHAPE: A3-D2-G2)").
+    .replace(/\([\s\S]*?\)/g, '')
+    // Line breaks (incl. blank lines between sections) become one separator so
+    // the note ending a line isn't fused with the note starting the next.
+    .replace(/[\r\n]+/g, '-')
     .replace(/\s*-\s*/g, '-')
     .replace(/\s*\/\s*/g, '/')
     .replace(/\s+/g, '')
+    // Collapse only leading/trailing separators (keep internal "--" rests intact).
+    .replace(/^-+|-+$/g, '')
     .replace(/([eBGDAE]\d+)(h|p|s)([eBGDAE]\d+)/gi, (_, from, technique, to) => {
       const modifier = technique.toLowerCase() === 'h'
         ? 'h'

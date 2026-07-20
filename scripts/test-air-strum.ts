@@ -210,4 +210,46 @@ const CHANNA_TAB = 'A0-e0-B1-G2-B1-e0-E0-e0-B0-G0-B0-e0-D3-e0-B1-G2-B1-e0-A3-e0-
   assert.ok(hasSlap, 'includes a percussive slap');
 }
 
+// ─── Parenthetical annotations must not break tab loading ────────────────────
+// The user's tab carries "(CHORD SHAPE: A3-D2-G2)" / "(Chord to A3, D1, G2)"
+// annotation lines and inline "Slap(playing the d and g string)" notes. Loading
+// it should behave EXACTLY like the hand-cleaned version (annotations removed),
+// so they never have to edit it by hand.
+{
+  const original = `E3/B0-Slap-E3-B3-Slap-E3/B0-Slap-E3/B3-Hammer-B5-Pulloff-B0-Slap-E3
+
+E2/B0-Slap-E2-B3-Slap-E2/G2-Slap-E2-B3-B0-Slap-E2/B0
+
+(CHORD SHAPE: A3-D2-G2)
+
+A3/D2/G2-G0-Slap(playing the d and g string)-A3-G0-G2-Slap-A3/B0
+
+Slap-A3-B3-B0-Slap-B0
+
+(Chord to A3, D1, G2)
+
+A3-D1-G2-G2-Slap-A3/B3-B3-Slap-A3/B0-Slap-A3-G2-G0-Slap`;
+
+  const handCleaned = `E3/B0-Slap-E3-B3-Slap-E3/B0-Slap-E3/B3-Hammer-B5-Pulloff-B0-Slap-E3
+
+E2/B0-Slap-E2-B3-Slap-E2/G2-Slap-E2-B3-B0-Slap-E2/B0
+
+A3/D2/G2-G0-Slap-A3-G0-G2-Slap-A3/B0
+
+Slap-A3-B3-B0-Slap-B0
+
+A3-D1-G2-G2-Slap-A3/B3-B3-Slap-A3/B0-Slap-A3-G2-G0-Slap`;
+
+  const parsedOriginal = parseFingerstyleTab(original);
+  const parsedClean = parseFingerstyleTab(handCleaned);
+  assert.deepEqual(parsedOriginal, parsedClean, 'annotated tab parses identically to the hand-cleaned one');
+  assert.ok(parsedOriginal.length > 20, `annotated tab yields a full sequence (got ${parsedOriginal.length})`);
+  assert.ok(parsedOriginal.some(f => f.percussion === 'slap'), 'slaps survive (incl. the inline "Slap(...)" ones)');
+  // No phantom notes leaked from the "(CHORD SHAPE: A3-D2-G2)" annotation: every
+  // note is a valid string/fret (that was always true, but confirm no crash/NaN).
+  for (const f of parsedOriginal) for (const n of f.notes) {
+    assert.ok(n.string >= 0 && n.string <= 5 && n.fret >= 0, 'valid note');
+  }
+}
+
 console.log('air-strum + channa demo tests passed');

@@ -7,6 +7,7 @@ import { logout } from '../services/authService';
 import PlectrumLogo from './PlectrumLogo';
 import FloatingAssistant from './FloatingAssistant';
 import CloudSyncPanel from './CloudSyncPanel';
+import { warmUpHandTracker } from '../services/handTracking';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -150,7 +151,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
     window.location.reload();
   };
 
-  const NavItem = ({ view, icon: Icon, label, soundIndex, id }: { view: ViewState, icon: any, label: string, soundIndex: number, id?: string }) => {
+  const NavItem = ({ view, icon: Icon, label, soundIndex, id, onIntent }: { view: ViewState, icon: any, label: string, soundIndex: number, id?: string, onIntent?: () => void }) => {
     return (
       <button
         id={id}
@@ -160,6 +161,11 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
           changeView(view);
           setIsMobileMenuOpen(false);
         }}
+        // Prefetch heavy assets on intent (hover / touch / keyboard focus) so the
+        // destination is warm by the time it opens — e.g. Air Strum's hand model.
+        onMouseEnter={onIntent}
+        onFocus={onIntent}
+        onTouchStart={onIntent}
         className={`flex items-center w-full px-4 py-3 mb-2 rounded-lg group transition-all duration-300 relative ${currentView === view
             ? 'bg-gradient-to-r from-amber-700/90 to-amber-800/80 text-amber-50 shadow-lg border border-amber-600/50 translate-x-1'
             : 'text-amber-200/60 hover:bg-amber-900/40 hover:text-amber-100 hover:translate-x-1'
@@ -230,7 +236,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
               </h3>
               <NavItem id="nav-practice" view="PRACTICE_ROOM" icon={Video} label="Practice Room" soundIndex={3} />
               <NavItem id="nav-fretboard" view="FRETBOARD_LAB" icon={Guitar} label="Fretboard Lab" soundIndex={2} />
-              <NavItem id="nav-airstrum" view="AIR_STRUM" icon={Hand} label="Air Strum" soundIndex={2} />
+              <NavItem id="nav-airstrum" view="AIR_STRUM" icon={Hand} label="Air Strum" soundIndex={2} onIntent={warmUpHandTracker} />
               <NavItem view="CHORD_TRAINER" icon={BookOpen} label="Chord Quiz" soundIndex={3} />
               <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
               <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />
@@ -331,7 +337,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             <NavItem view="EDITOR" icon={PlusCircle} label="Composer" soundIndex={1} />
             <NavItem view="PRACTICE_ROOM" icon={Video} label="Practice Room" soundIndex={3} />
             <NavItem view="FRETBOARD_LAB" icon={Guitar} label="Fretboard Lab" soundIndex={2} />
-            <NavItem view="AIR_STRUM" icon={Hand} label="Air Strum" soundIndex={2} />
+            <NavItem view="AIR_STRUM" icon={Hand} label="Air Strum" soundIndex={2} onIntent={warmUpHandTracker} />
             <NavItem view="CHORD_TRAINER" icon={BookOpen} label="Chord Quiz" soundIndex={3} />
             <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
             <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />
