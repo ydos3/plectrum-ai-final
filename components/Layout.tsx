@@ -354,7 +354,22 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
             <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />
             {cloudSyncEnabled() && <NavItem view="CONNECTIONS" icon={Users} label="Connections" soundIndex={2} />}
-            <button onClick={handleLogout} className="w-full py-4 text-amber-500 flex items-center justify-center gap-2 border-t border-amber-900/50 mt-8">
+
+            {/* Account & cloud sync — so mobile users can sign in and sync too. */}
+            <div className="mt-6 pt-5 border-t border-amber-900/50 space-y-3">
+              <div className="flex items-center gap-3 px-1">
+                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-600 to-amber-800 border border-amber-900/50 flex items-center justify-center shrink-0">
+                  <UserIcon className="w-4 h-4 text-amber-100" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-amber-100 truncate">{user?.name || 'Guest'}</p>
+                  <p className="text-[10px] text-amber-500/80">Account &amp; sync</p>
+                </div>
+              </div>
+              <CloudSyncPanel />
+            </div>
+
+            <button onClick={handleLogout} className="w-full py-4 text-amber-500 flex items-center justify-center gap-2 border-t border-amber-900/50 mt-6">
               <LogOut className="w-4 h-4" /> Sign Out
             </button>
             <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 pt-4 text-[11px] text-amber-700 no-global-click">

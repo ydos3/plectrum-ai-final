@@ -18,3 +18,12 @@ root.render(
     <SpeedInsights />
   </React.StrictMode>
 );
+
+// Register the PWA service worker in production only (avoids interfering with the
+// Vite dev server / HMR). Enables install-as-app + basic offline. Failures are
+// non-fatal — the app works fine without it.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* SW optional */ });
+  });
+}
