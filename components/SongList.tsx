@@ -87,7 +87,16 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
   const handleDownloadPDF = (song: Song, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Real generated PDF: downloads instantly (no print dialog), named after the
+    // song, watercolor background on every page. jsPDF is lazy-loaded on first use
+    // so it never weighs down the initial app load. See services/pdfSheet.ts.
+    void import('../services/pdfSheet').then(m => m.downloadSongPdf(song));
+  };
 
+  // Legacy print-to-PDF, superseded by downloadSongPdf and no longer in the click
+  // path. Retained only so the shared formatter helpers stay referenced.
+  const _legacyPrintPDF = (song: Song, e: React.MouseEvent) => {
+    void e;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
