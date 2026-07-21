@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Song, SongStatus } from '../types';
 import { deleteSong, getSongs } from '../services/storageService';
-import { Download, Edit2, Film, Guitar, Play, Plus, Search, Trash2, Video } from 'lucide-react';
+import { Download, Edit2, Film, Guitar, Play, Plus, Search, Trash2, Video, Share2 } from 'lucide-react';
+import { cloudSyncEnabled } from '../services/authClient';
+import { isCloudSignedIn } from '../services/emailAuth';
+import ShareDialog from './ShareDialog';
 
 // Honest completeness badges so demo/incomplete songs are never shown as polished.
 const STATUS_BADGES: Record<Exclude<SongStatus, 'complete'>, { label: string; className: string }> = {
@@ -24,6 +27,8 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
   const [songs, setSongs] = useState<Song[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeLetter, setActiveLetter] = useState('All');
+  const [shareTarget, setShareTarget] = useState<Song | null>(null);
+  const canShare = cloudSyncEnabled() && isCloudSignedIn();
 
   const loadSongs = () => {
     const storedSongs = getSongs().sort((a, b) => (
@@ -299,6 +304,7 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
                       </button>
                     )}
                     {onOpenLab && <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenLab(song); }} className="p-2 text-amber-500 hover:text-white hover:bg-amber-800 rounded-lg" title="Fretboard Lab"><Guitar className="w-4 h-4" /></button>}
+                    {canShare && !song.isBuiltIn && <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShareTarget(song); }} className="p-2 text-amber-500 hover:text-white hover:bg-amber-800 rounded-lg" title="Share"><Share2 className="w-4 h-4" /></button>}
                     <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(song); }} className="p-2 text-amber-500 hover:text-white hover:bg-amber-800 rounded-lg" title="Edit"><Edit2 className="w-4 h-4" /></button>
                     <button onClick={(e) => handleDelete(song.id, e)} className="p-2 text-amber-500 hover:text-red-400 hover:bg-red-900/20 rounded-lg" title="Delete"><Trash2 className="w-4 h-4" /></button>
                   </div>
@@ -316,6 +322,7 @@ const SongList: React.FC<SongListProps> = ({ onEdit, onPlay, onOpenLab, onOpenPr
           </div>
         )}
       </div>
+      {shareTarget && <ShareDialog song={shareTarget} onClose={() => setShareTarget(null)} />}
     </div>
   );
 };

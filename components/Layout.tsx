@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Image as ImageIcon, PlusCircle, Search, Menu, X, BookOpen, LogOut, User as UserIcon, Guitar, Globe, Video, HelpCircle, ChevronRight, ChevronLeft, Sparkles, Hand } from 'lucide-react';
+import { MessageSquare, Image as ImageIcon, PlusCircle, Search, Menu, X, BookOpen, LogOut, User as UserIcon, Guitar, Globe, Video, HelpCircle, ChevronRight, ChevronLeft, Sparkles, Hand, Users } from 'lucide-react';
+import { cloudSyncEnabled } from '../services/authClient';
 import { ViewState, User, AppLanguage } from '../types';
 import { playLogoChord, playNavChord } from '../services/audioService';
 import { logout } from '../services/authService';
@@ -238,6 +239,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
               <NavItem view="CHORD_TRAINER" icon={BookOpen} label="Chord Quiz" soundIndex={3} />
               <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
               <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />
+              {cloudSyncEnabled() && <NavItem view="CONNECTIONS" icon={Users} label="Connections" soundIndex={2} />}
             </div>
           </nav>
 
@@ -351,6 +353,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             <NavItem view="CHORD_TRAINER" icon={BookOpen} label="Chord Quiz" soundIndex={3} />
             <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
             <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />
+            {cloudSyncEnabled() && <NavItem view="CONNECTIONS" icon={Users} label="Connections" soundIndex={2} />}
             <button onClick={handleLogout} className="w-full py-4 text-amber-500 flex items-center justify-center gap-2 border-t border-amber-900/50 mt-8">
               <LogOut className="w-4 h-4" /> Sign Out
             </button>
