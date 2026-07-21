@@ -21,6 +21,7 @@ import {
 } from '../services/lyricsSync';
 import { useYouTubePlaybackClock } from './useYouTubePlaybackClock';
 import GuitarFretboard from './GuitarFretboard';
+import KaraokeAmbience from './KaraokeAmbience';
 
 interface TeleprompterProps {
   song: Song;
@@ -264,6 +265,10 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
   const [syncMessage, setSyncMessage] = useState('');
   const [autoFollowPaused, setAutoFollowPaused] = useState(false);
   const [showReturnToCurrent, setShowReturnToCurrent] = useState(false);
+  // Immersive mode: header/footer fade away while playing and return on any
+  // pointer move / touch / key press, so lyrics own the screen during a song.
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const chromeTimerRef = useRef<number | null>(null);
 
   // Resizable split pane: ratio is the lyrics panel width (0.3 – 0.8)
   const [splitRatio, setSplitRatio] = useState(() => clampNumber(persistedState.current.splitRatio, 0.67, 0.3, 0.8));
@@ -363,6 +368,29 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
 
   // Mirror to refs so the scroll loop reads live values without restarting.
   useEffect(() => { autoFollowPausedRef.current = autoFollowPaused; }, [autoFollowPaused]);
+
+  // Auto-hide the header/footer during playback; reveal on any interaction. When
+  // paused, chrome stays visible so controls are always reachable.
+  useEffect(() => {
+    const reveal = () => {
+      setChromeVisible(true);
+      if (chromeTimerRef.current) window.clearTimeout(chromeTimerRef.current);
+      if (isPlaying) chromeTimerRef.current = window.setTimeout(() => setChromeVisible(false), 3000);
+    };
+    reveal();
+    if (!isPlaying) return;
+    window.addEventListener('pointermove', reveal, { passive: true });
+    window.addEventListener('pointerdown', reveal, { passive: true });
+    window.addEventListener('touchstart', reveal, { passive: true });
+    window.addEventListener('keydown', reveal);
+    return () => {
+      window.removeEventListener('pointermove', reveal);
+      window.removeEventListener('pointerdown', reveal);
+      window.removeEventListener('touchstart', reveal);
+      window.removeEventListener('keydown', reveal);
+      if (chromeTimerRef.current) window.clearTimeout(chromeTimerRef.current);
+    };
+  }, [isPlaying]);
   useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
 
   // ─── Parse Song Content ────────────────────────────────────────────
@@ -1494,10 +1522,13 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
         <div className={`absolute bottom-0 left-1/4 w-[600px] h-[300px] blur-[120px] rounded-full ${isAiGenerated ? 'bg-fuchsia-900/10' : 'bg-indigo-500/10'}`}></div>
         <div className="absolute inset-0 bg-black/25"></div>
       </div>
+      {/* Music-diary ambience: procedural watercolor drift behind the lyrics,
+          per-song palette, reduced-motion aware. Stays behind text (z-0). */}
+      <KaraokeAmbience seed={song.title} playing={isPlaying} />
       {/* Header - translucent overlay so it never hides the lyrics behind it */}
-      <div className={`absolute top-0 left-0 right-0 h-20 md:h-24 flex items-center justify-between px-3 md:px-8 z-50 shrink-0 w-full opacity-100 md:opacity-30 md:hover:opacity-100 transition-opacity duration-300 backdrop-blur-sm bg-gradient-to-b ${
-        isAiGenerated ? 'from-[#1a050f]/55 to-transparent' : 'from-[#0f172a]/55 to-transparent'
-      }`}>
+      <div className={`absolute top-0 left-0 right-0 h-20 md:h-24 flex items-center justify-between px-3 md:px-8 z-50 shrink-0 w-full transition-all duration-500 backdrop-blur-sm bg-gradient-to-b ${
+        chromeVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none'
+      } ${isAiGenerated ? 'from-[#1a050f]/55 to-transparent' : 'from-[#0f172a]/55 to-transparent'}`}>
         <div className="flex items-center gap-3 flex-1 min-w-0">
              <button onClick={onClose} className="p-2.5 bg-white/[0.04] hover:bg-white/[0.08] text-white rounded-xl transition-all backdrop-blur-lg shrink-0 active:scale-95 border border-white/[0.06]">
                 <ArrowLeft className="w-5 h-5" />
@@ -1723,9 +1754,9 @@ const Teleprompter: React.FC<TeleprompterProps> = ({ song, onClose }) => {
       )}
 
       {/* Playback Footer - translucent overlay so it never hides the lyrics */}
-      <div className={`absolute bottom-0 left-0 right-0 h-20 md:h-24 pb-safe flex items-center justify-start md:justify-center gap-2 md:gap-8 z-50 shrink-0 opacity-100 md:opacity-40 md:hover:opacity-100 transition-opacity duration-300 overflow-x-auto px-2 md:px-0 backdrop-blur-sm bg-gradient-to-t ${
-        isAiGenerated ? 'from-[#1a050f]/55 to-transparent' : 'from-[#0f172a]/55 to-transparent'
-      }`}>
+      <div className={`absolute bottom-0 left-0 right-0 h-20 md:h-24 pb-safe flex items-center justify-start md:justify-center gap-2 md:gap-8 z-50 shrink-0 transition-all duration-500 overflow-x-auto px-2 md:px-0 backdrop-blur-sm bg-gradient-to-t ${
+        chromeVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
+      } ${isAiGenerated ? 'from-[#1a050f]/55 to-transparent' : 'from-[#0f172a]/55 to-transparent'}`}>
              <div className="flex items-center gap-1 md:gap-2 px-1.5 md:px-4 border-r border-white/[0.06] pr-2 md:pr-6">
                  <button onClick={() => setFontSize(f => Math.max(16, f-2))} className="p-2 md:p-3 bg-white/[0.04] hover:bg-white/[0.08] rounded-xl text-gray-400 hover:text-white transition-all active:scale-95"><Minus className="w-4 h-4"/></button>
                  <div className="flex flex-col items-center w-12 md:w-16">
