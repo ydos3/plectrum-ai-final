@@ -19,6 +19,13 @@ export const sanitizeFilename = (title?: string): string => {
   return `${base || 'Plectrum Practice Sheet'}.pdf`;
 };
 
+// True when text contains a complex / non-Latin script (Indic, Arabic, CJK, etc.)
+// that jsPDF's built-in Latin fonts can't render — those sheets go through the
+// browser-canvas renderer so the correct glyphs are drawn. Latin/European text
+// (incl. smart quotes, em-dashes) stays on the crisp vector path.
+const COMPLEX_SCRIPT = /[؀-ۿ܀-ݏऀ-෿฀-࿿က-႟ᄀ-ᇿ぀-ヿ㐀-鿿ꀀ-꯿가-힯豈-﫿]/;
+export const hasComplexScript = (text?: string): boolean => COMPLEX_SCRIPT.test(String(text ?? ''));
+
 export type SheetLineKind = 'section' | 'lyric' | 'spacer';
 export interface SheetLine { kind: SheetLineKind; text: string; chords: string[]; }
 

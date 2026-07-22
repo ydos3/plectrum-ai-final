@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { sanitizeFilename, parseSheetContent } from '../services/pdfSheetLayout.ts';
+import { sanitizeFilename, parseSheetContent, hasComplexScript } from '../services/pdfSheetLayout.ts';
 
 // ── filename sanitisation ──
 {
@@ -50,6 +50,17 @@ import { sanitizeFilename, parseSheetContent } from '../services/pdfSheetLayout.
   // Short song → exactly one page, still valid.
   const shortDoc = renderSheetDoc({ id: 'y', title: 'Tiny', artist: 'A', content: '### [V]\nHi [C]', createdAt: 1 } as any, null);
   assert.equal(shortDoc.getNumberOfPages(), 1, 'short song is a single page');
+}
+
+// ── complex-script detection (routes non-Latin sheets to the canvas renderer) ──
+{
+  assert.equal(hasComplexScript('Vhalam Aavo Ne'), false, 'romanised Latin title → vector path');
+  assert.equal(hasComplexScript('Death Bed - Fingerstyle'), false, 'English → vector');
+  assert.equal(hasComplexScript('“Smart” quotes — dash'), false, 'punctuation is not complex script');
+  assert.ok(hasComplexScript('વ્હાલમ આવો ને'), 'Gujarati → canvas path');
+  assert.ok(hasComplexScript('ख़ैरियत'), 'Devanagari → canvas path');
+  assert.ok(hasComplexScript('காதல்'), 'Tamil → canvas path');
+  assert.ok(hasComplexScript('Verse [G]\nहेलो'), 'mixed English+Hindi → canvas path');
 }
 
 console.log('pdf-sheet tests passed');

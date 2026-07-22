@@ -79,16 +79,33 @@ const FretboardLab: React.FC<FretboardLabProps> = ({ initialSong, onBack }) => {
     setSongs(getSongs());
   }, []);
 
+  // Pull tab lines out of a song's content when there's no explicit fingerstyleTab
+  // field (many songs store the tab inside `content`, mixed with headers/prose).
+  // A "tab line" has ≥2 string+fret tokens like A0 / E3 / B1.
+  const extractTabFromContent = (content: string): string => {
+    const noteTok = /[eEbBgGdDaA]\d/g;
+    return String(content || '')
+      .split(/\r?\n/)
+      .filter(line => {
+        const t = line.trim();
+        if (!t || t.startsWith('###') || t.startsWith('(')) return false;
+        return (t.match(noteTok) || []).length >= 2;
+      })
+      .join('\n')
+      .trim();
+  };
+
   const loadSongIntoLab = (song: Song) => {
       // A song is "fingerstyle" if it carries a playable tab OR its title says so
       // (e.g. "… — Fingerstyle Study"). Those open straight into the TABS sequencer
       // showing their own tab — never the default preset.
       const titleSaysFingerstyle = /finger[-\s]?style|fingerpick/i.test(song.title || '');
-      if (song.fingerstyleTab || titleSaysFingerstyle) {
+      const tabFromContent = extractTabFromContent(song.content);
+      if (song.fingerstyleTab || titleSaysFingerstyle || tabFromContent) {
           setInputMode('FINGERSTYLE');
-          // Prefer the explicit playable tab; otherwise start this song on an empty
-          // tab sheet (so it reflects THIS song, not whatever was loaded before).
-          setInputText(song.fingerstyleTab ?? '');
+          // Prefer the explicit playable tab; else pull the tab lines out of content;
+          // else the raw content — so the TABS box is never wrongly empty.
+          setInputText(song.fingerstyleTab || tabFromContent || song.content || '');
           setStrumPattern('');
           setCapoPosition(song.capo ?? 0);
           setPlaybackSpeed(song.fingerstyleTab ? 1.4 : 1); // ballad feel for the demos
