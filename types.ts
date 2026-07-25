@@ -67,7 +67,7 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-export type ViewState = 'AUTH' | 'SUBSCRIPTION' | 'ONBOARDING' | 'LIBRARY' | 'EDITOR' | 'TELEPROMPTER' | 'CHAT' | 'ANALYZER' | 'CHORD_TRAINER' | 'FRETBOARD_LAB' | 'PRACTICE_ROOM' | 'AIR_STRUM' | 'CONNECTIONS';
+export type ViewState = 'AUTH' | 'SUBSCRIPTION' | 'ONBOARDING' | 'LIBRARY' | 'EDITOR' | 'TELEPROMPTER' | 'CHAT' | 'ANALYZER' | 'CHORD_TRAINER' | 'FRETBOARD_LAB' | 'PRACTICE_ROOM' | 'AIR_STRUM' | 'AIR_JAM' | 'CONNECTIONS';
 
 export interface ViewProps {
   changeView: (view: ViewState, data?: any) => void;

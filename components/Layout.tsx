@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Image as ImageIcon, PlusCircle, Search, Menu, X, BookOpen, LogOut, User as UserIcon, Guitar, Globe, Video, HelpCircle, ChevronRight, ChevronLeft, Sparkles, Hand, Users } from 'lucide-react';
+import { MessageSquare, Image as ImageIcon, PlusCircle, Search, Menu, X, BookOpen, LogOut, User as UserIcon, Guitar, Globe, Video, HelpCircle, ChevronRight, ChevronLeft, Sparkles, Hand, Users, Zap } from 'lucide-react';
 import { cloudSyncEnabled } from '../services/authClient';
 import { ViewState, User, AppLanguage } from '../types';
 import { playLogoChord, playNavChord } from '../services/audioService';
@@ -236,6 +236,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
               <NavItem id="nav-practice" view="PRACTICE_ROOM" icon={Video} label="Practice Room" soundIndex={3} />
               <NavItem id="nav-fretboard" view="FRETBOARD_LAB" icon={Guitar} label="Fretboard Lab" soundIndex={2} />
               <NavItem id="nav-airstrum" view="AIR_STRUM" icon={Hand} label="Air Strum" soundIndex={2} onIntent={warmUpHandTracker} />
+            <NavItem view="AIR_JAM" icon={Zap} label="Air Jam" soundIndex={1} onIntent={warmUpHandTracker} />
               <NavItem view="CHORD_TRAINER" icon={BookOpen} label="Chord Quiz" soundIndex={3} />
               <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
               <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />
@@ -350,6 +351,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, changeView, user
             <NavItem view="PRACTICE_ROOM" icon={Video} label="Practice Room" soundIndex={3} />
             <NavItem view="FRETBOARD_LAB" icon={Guitar} label="Fretboard Lab" soundIndex={2} />
             <NavItem view="AIR_STRUM" icon={Hand} label="Air Strum" soundIndex={2} onIntent={warmUpHandTracker} />
+            <NavItem view="AIR_JAM" icon={Zap} label="Air Jam" soundIndex={1} onIntent={warmUpHandTracker} />
             <NavItem view="CHORD_TRAINER" icon={BookOpen} label="Chord Quiz" soundIndex={3} />
             <NavItem view="ANALYZER" icon={ImageIcon} label="Tab Scanner" soundIndex={0} />
             <NavItem view="CHAT" icon={MessageSquare} label="Bes (Guide)" soundIndex={1} />

@@ -14,8 +14,18 @@ export interface HandPoint {
   y: number; // normalized 0..1, top→bottom
 }
 
+/** One full hand: all 21 MediaPipe landmarks (mirrored to match the flipped video). */
+export interface HandFrame {
+  /** 21 landmarks, indices per MediaPipe's hand model (0 = wrist, 4 = thumb tip, …). */
+  landmarks: HandPoint[];
+  /** 'Left' | 'Right' as seen in the MIRRORED (on-screen) view, i.e. what the user sees. */
+  handedness: 'Left' | 'Right';
+}
+
 export interface HandTracker {
   detect(video: HTMLVideoElement, timestampMs: number): HandPoint[];
+  /** Full 21-landmark frames — needed for finger-counting / chord gestures (Air Jam). */
+  detectFull(video: HTMLVideoElement, timestampMs: number): HandFrame[];
   close(): void;
 }
 
@@ -69,6 +79,25 @@ export const createHandTracker = async (): Promise<HandTracker | null> => {
           return hands
             .filter(lm => lm && lm[INDEX_FINGERTIP])
             .map(lm => ({ x: 1 - lm[INDEX_FINGERTIP].x, y: lm[INDEX_FINGERTIP].y }));
+        } catch {
+          return [];
+        }
+      },
+      detectFull(video: HTMLVideoElement, timestampMs: number): HandFrame[] {
+        try {
+          const res = landmarker.detectForVideo(video, timestampMs);
+          const hands: any[] = res?.landmarks || [];
+          const handed: any[] = res?.handednesses || res?.handedness || [];
+          return hands.filter(lm => lm && lm.length >= 21).map((lm, i) => {
+            // MediaPipe labels handedness for the RAW camera image; the view is
+            // mirrored, so the on-screen hand is the opposite label.
+            const raw = handed?.[i]?.[0]?.categoryName ?? handed?.[i]?.categoryName;
+            const handedness: 'Left' | 'Right' = raw === 'Left' ? 'Right' : 'Left';
+            return {
+              handedness,
+              landmarks: lm.map((p: any) => ({ x: 1 - p.x, y: p.y })),
+            };
+          });
         } catch {
           return [];
         }
