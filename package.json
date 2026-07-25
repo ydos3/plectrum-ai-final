@@ -17,13 +17,14 @@
     "test:social": "node scripts/test-social.ts",
     "test:pdf": "node scripts/test-pdf-sheet.ts",
     "test:gesture": "node scripts/test-gesture-chord.ts",
-    "test": "node scripts/test-lyrics-sync.ts && node scripts/test-air-strum.ts && node scripts/test-song-sync.ts && node scripts/test-songs-api.ts && node scripts/test-storage-namespace.ts && node scripts/test-email-auth.ts && node scripts/test-social.ts && node scripts/test-pdf-sheet.ts && node scripts/test-gesture-chord.ts && node scripts/test-sing-along.ts",
+    "test": "node scripts/test-lyrics-sync.ts && node scripts/test-air-strum.ts && node scripts/test-song-sync.ts && node scripts/test-songs-api.ts && node scripts/test-storage-namespace.ts && node scripts/test-email-auth.ts && node scripts/test-social.ts && node scripts/test-pdf-sheet.ts && node scripts/test-gesture-chord.ts && node scripts/test-sing-along.ts && node scripts/test-strum-onset.ts",
     "audit:prod": "npm audit --omit=dev",
     "deploy:vercel": "vercel --prod",
     "validate:song-db": "node scripts/validate-song-db.mjs",
     "audit:song-db": "node scripts/audit-song-db-completeness.mjs",
     "smoke:db": "echo 'Run dev server first, then: curl -X POST http://localhost:5173/api/test-song-lookup -H \"Content-Type: application/json\" -d \"{\\\"query\\\":\\\"Majboor\\\"}\"'",
-    "test:sing": "node scripts/test-sing-along.ts"
+    "test:sing": "node scripts/test-sing-along.ts",
+    "test:strum": "node scripts/test-strum-onset.ts"
   },
   "dependencies": {
     "@auth/core": "^0.34.3",

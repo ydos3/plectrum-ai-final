@@ -5,6 +5,8 @@ import { playStrum, playNote, resumeAudio, stopAllAudio, setResonance } from '..
 import { ParticleField } from '../services/particleField';
 import { resolvePluckNote } from '../services/airStrumDetector';
 import { StrumEngine } from '../services/airStrumEngine';
+import { StrumOnsetEngine, rakeOffsets } from '../services/strumOnsetEngine';
+import { stringIndexFromX } from '../services/airStrumDetector';
 import { warmUpHandTracker, HandTracker } from '../services/handTracking';
 
 interface AirStrumProps {
@@ -66,6 +68,9 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
   // crosses (not just one), and gentle motion is enough — no velocity gate. All
   // smoothing, dwell, debounce and per-string state lives inside the engine.
   const engineRef = useRef<StrumEngine>(new StrumEngine());
+  // Low-latency strum detection (velocity onset). Handles the strum hand; the
+  // StrumEngine above still handles point-and-hold chord selection.
+  const onsetRef = useRef<StrumOnsetEngine>(new StrumOnsetEngine());
   // MediaPipe hand tracking (precise, smooth) — with motion-diff as fallback.
   const trackerRef = useRef<HandTracker | null>(null);
   const lastInferRef = useRef(0); // throttle heavy inference (mobile-friendly)
@@ -168,17 +173,32 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     engine.setChordCount(scaleLenRef.current);
     const r = engine.step(hands, now);
 
-    // Play every string the strum hand crossed this frame. When a fast wave rakes
-    // several strings in one frame, stagger them a few ms apart so it sounds like
-    // a real strum sweeping across the neck — not all strings hit at once.
-    if (r.pluck.length === 1) {
-      pluckRef.current(r.pluck[0]);
-    } else {
-      r.pluck.forEach((s, i) => {
-        if (i === 0) pluckRef.current(s);
-        else window.setTimeout(() => pluckRef.current(s), i * 24);
+    // ── Strum detection: ONSET-based (services/strumOnsetEngine.ts) ──
+    // The old path waited for the hand to CROSS each string, which can only be
+    // observed after it already arrived — late on top of the ~110ms camera+
+    // inference+audio pipeline, and unreliable on fast sweeps. We now fire on the
+    // velocity spike as the hand ACCELERATES, which happens before it reaches the
+    // strings, so the note lands earlier and every sweep registers.
+    const strumHand = hands.find(h => h.y >= NOTE_ZONE_TOP) ?? null;
+    const onset = onsetRef.current.step(
+      strumHand ? strumHand.x : null,
+      now,
+      (x) => stringIndexFromX(x, STRINGS_LEFT, STRINGS_SPAN, 6),
+    );
+
+    if (onset.strum) {
+      // One physical sweep = one full chord rake, cascaded like a real strum.
+      const order = onset.strum.direction === 'D' ? [0, 1, 2, 3, 4, 5] : [5, 4, 3, 2, 1, 0];
+      const offs = rakeOffsets(onset.strum.intensity, 6, 'D'); // ascending delays
+      order.forEach((stringIdx, i) => {
+        if (offs[i] <= 0) pluckRef.current(stringIdx);
+        else window.setTimeout(() => pluckRef.current(stringIdx), offs[i]);
       });
+    } else if (onset.pick !== null) {
+      // Slow, deliberate motion picks the single string under the hand.
+      pluckRef.current(onset.pick);
     }
+
     // Commit a chord when the point-and-hold dwell completes.
     if (r.selectChord !== null) selectChordRef.current(r.selectChord);
 
@@ -256,6 +276,7 @@ const AirStrum: React.FC<AirStrumProps> = ({ onBack }) => {
     if (videoRef.current) videoRef.current.srcObject = null;
     // Keep the loaded hand tracker alive for instant restart; it's closed on unmount.
     engineRef.current.reset();
+    onsetRef.current.reset();
     prevLumaRef.current = null;
     setHandTrackingOn(false);
     setHandInFrame(false); setHoverNote(-1); setPlayingString(-1);
