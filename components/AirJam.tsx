@@ -5,6 +5,7 @@ import { GestureChordEngine, chordForSlot } from '../services/gestureChordEngine
 import { getChordFingering } from '../services/chordService';
 import { playStrum, resumeAudio, stopAllAudio, setResonance } from '../services/audioService';
 import { getSongs } from '../services/storageService';
+import { buildSingAlongScore, type SingAlongScore } from '../services/singAlongScore';
 
 interface Props { onBack?: () => void }
 
@@ -26,6 +27,8 @@ const AirJam: React.FC<Props> = ({ onBack }) => {
   const [trackerReady, setTrackerReady] = useState(false);
   const [progression, setProgression] = useState<Progression>(PRESETS[1]);
   const [showPicker, setShowPicker] = useState(false);
+  // Sing mode: a real song's lyrics with a finger count on every chord.
+  const [songScore, setSongScore] = useState<SingAlongScore | null>(null);
   const [autoStrum, setAutoStrum] = useState(true);
   const [bpm, setBpm] = useState(92);
 
@@ -69,13 +72,16 @@ const AirJam: React.FC<Props> = ({ onBack }) => {
   // Songs from the user's library whose chords we can jam over.
   const librarySongs = useMemo(() => {
     try {
-      return getSongs().filter(s => !s.isBuiltIn).map(s => {
-        const found = Array.from(String(s.content || '').matchAll(/\[([A-G][#b]?(?:m|maj7|m7|7|sus[24]|dim|aug|add9)?)\]/g)).map(m => m[1]);
-        const uniq: string[] = [];
-        for (const c of found) if (!uniq.includes(c) && uniq.length < 5) uniq.push(c);
-        return { id: s.id, title: s.title, chords: uniq };
-      }).filter(s => s.chords.length >= 2);
+      return getSongs().map(s => ({ id: s.id, title: s.title, score: buildSingAlongScore(s.content || '') }))
+        .filter(s => s.score.chords.length >= 2);
     } catch { return []; }
+  }, []);
+
+  /** Load a real song: its chords become the finger slots, its lyrics the score. */
+  const loadSong = useCallback((title: string, sc: SingAlongScore, id: string) => {
+    setSongScore(sc);
+    setProgression({ id, label: title, chords: sc.chords });
+    setShowPicker(false);
   }, []);
 
   useEffect(() => { setResonance(0.35); }, []);
@@ -252,11 +258,48 @@ const AirJam: React.FC<Props> = ({ onBack }) => {
           </div>
         )}
 
+        {/* Sing mode: lyrics with a finger count on every chord. You sing, your
+            hand changes chords, the app keeps the rhythm. */}
+        {songScore && (
+          <div className="absolute z-20 left-0 right-0 bottom-40 top-16 md:top-20 md:right-auto md:w-[46%] px-3 overflow-y-auto custom-scrollbar">
+            <div className="bg-black/55 backdrop-blur-md rounded-2xl border border-violet-900/50 p-4 space-y-1">
+              {songScore.lines.map((line, i) => {
+                if (line.kind === 'blank') return <div key={i} className="h-3" />;
+                if (line.kind === 'section') return (
+                  <div key={i} className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-400/90 pt-3 pb-1">{line.label}</div>
+                );
+                return (
+                  <p key={i} className="text-[15px] md:text-base leading-relaxed text-violet-50/90">
+                    {line.tokens.map((tk, j) => (
+                      <React.Fragment key={j}>
+                        {tk.chord && (
+                          <span className={`inline-flex items-baseline gap-1 mx-1 px-1.5 py-0.5 rounded-md text-[11px] font-black align-baseline transition-colors ${
+                            slot === tk.slot ? 'bg-emerald-400 text-emerald-950' : 'bg-violet-500/25 text-violet-200'
+                          }`}>
+                            {tk.chord}
+                            <span className="text-[9px] opacity-80">{tk.slot}&#402;</span>
+                          </span>
+                        )}
+                        {tk.text}
+                      </React.Fragment>
+                    ))}
+                  </p>
+                );
+              })}
+              {songScore.overflow.length > 0 && (
+                <p className="pt-3 text-[10px] text-amber-400/80">
+                  Not mapped to fingers (song has more than 7 chords): {songScore.overflow.join(', ')}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* THE money shot: huge chord name, legible in a 3-second clip */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+        <div className={`absolute inset-0 flex items-center justify-center pointer-events-none z-10 ${songScore ? 'md:justify-end md:pr-[6%] items-start pt-4 md:items-center md:pt-0' : ''}`}>
           {chordName ? (
             <div className="text-center animate-in zoom-in-95 fade-in duration-150">
-              <div className="text-[22vw] md:text-[16vw] leading-none font-black text-white drop-shadow-[0_0_40px_rgba(167,139,250,0.65)]">{chordName}</div>
+              <div className={`${songScore ? 'text-[14vw] md:text-[10vw]' : 'text-[22vw] md:text-[16vw]'} leading-none font-black text-white drop-shadow-[0_0_40px_rgba(167,139,250,0.65)]`}>{chordName}</div>
               <div className="mt-1 text-sm font-bold tracking-[0.3em] uppercase text-violet-300/80">{slot} finger{slot === 1 ? '' : 's'}</div>
             </div>
           ) : cameraOn ? (
@@ -313,16 +356,16 @@ const AirJam: React.FC<Props> = ({ onBack }) => {
             {showPicker && (
               <div className="absolute bottom-full mb-2 left-0 w-56 max-h-64 overflow-y-auto bg-[#120a18] border border-violet-900/60 rounded-xl shadow-2xl">
                 {PRESETS.map(p => (
-                  <button key={p.id} onClick={() => { setProgression(p); setShowPicker(false); }} className="w-full text-left px-3 py-2 hover:bg-violet-900/40">
+                  <button key={p.id} onClick={() => { setSongScore(null); setProgression(p); setShowPicker(false); }} className="w-full text-left px-3 py-2 hover:bg-violet-900/40">
                     <div className="text-xs font-bold text-violet-100">{p.label}</div>
                     <div className="text-[10px] text-violet-400">{p.chords.join(' · ')}</div>
                   </button>
                 ))}
-                {librarySongs.length > 0 && <div className="px-3 py-1.5 text-[9px] uppercase tracking-widest text-violet-600 font-bold border-t border-violet-900/60">Your songs</div>}
+                {librarySongs.length > 0 && <div className="px-3 py-1.5 text-[9px] uppercase tracking-widest text-violet-600 font-bold border-t border-violet-900/60">Sing along</div>}
                 {librarySongs.map(s => (
-                  <button key={s.id} onClick={() => { setProgression({ id: s.id, label: s.title, chords: s.chords }); setShowPicker(false); }} className="w-full text-left px-3 py-2 hover:bg-violet-900/40">
+                  <button key={s.id} onClick={() => loadSong(s.title, s.score, s.id)} className="w-full text-left px-3 py-2 hover:bg-violet-900/40">
                     <div className="text-xs font-bold text-violet-100 truncate">{s.title}</div>
-                    <div className="text-[10px] text-violet-400 truncate">{s.chords.join(' · ')}</div>
+                    <div className="text-[10px] text-violet-400 truncate">{s.score.chords.join(' · ')}</div>
                   </button>
                 ))}
               </div>
