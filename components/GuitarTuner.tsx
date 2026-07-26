@@ -320,6 +320,21 @@ const GuitarTuner: React.FC<GuitarTunerProps> = ({ onBack }) => {
                 </div>
             </div>
 
+            {/* SAFETY: in auto mode a pitch can sit nearest a string the player is
+                NOT holding (a sharp low E reads as a flat A2). Following that would
+                mean tightening a 4th too far — tension rises with the square of
+                pitch — so we warn and steer them to lock the string manually. */}
+            {mode === 'auto' && currentResult && (currentResult.ambiguous || currentResult.risky) && (
+                <div className="mx-3 mb-2 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 backdrop-blur-lg">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                    <p className="text-[11px] leading-snug text-amber-200">
+                        <b>Check you're on the right string.</b> This pitch sits between strings — the
+                        tuner guessed <b>{currentResult.targetNote}</b>. Tap your string below to lock it
+                        before tightening.
+                    </p>
+                </div>
+            )}
+
             {/* 3D Stage */}
             <div className="flex-1 relative flex flex-col items-center justify-start w-full overflow-hidden"
                 style={{ perspective: '1000px' }}

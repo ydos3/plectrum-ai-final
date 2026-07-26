@@ -15,6 +15,7 @@ const PracticeRoom = lazy(() => import('./components/PracticeRoom'));
 // Air Strum bundles a camera + motion loop; lazy-load so it never touches the
 // initial bundle or requests the camera on the homepage.
 const AirStrum = lazy(() => import('./components/AirStrum'));
+const GuitarTuner = lazy(() => import('./components/GuitarTuner'));
 import { Song, ViewState, User, AppLanguage, SkillLevel } from './types';
 import { getCurrentUser, login } from './services/authService';
 import { playNextGlobalLoopChord, resumeAudio } from './services/audioService';
@@ -541,6 +542,7 @@ const App: React.FC = () => {
                         {currentView === 'CHORD_TRAINER' && <ChordTrainer onBack={goBack} />}
                         {currentView === 'FRETBOARD_LAB' && <FretboardLab initialSong={selectedSong} onBack={goBack} />}
                         {currentView === 'AIR_STRUM' && <AirStrum onBack={goBack} />}
+                        {currentView === 'TUNER' && <GuitarTuner onBack={goBack} />}
                         {currentView === 'CONNECTIONS' && <Connections onBack={goBack} />}
                         {currentView === 'PRACTICE_ROOM' && (
                             selectedSong
