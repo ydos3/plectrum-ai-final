@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   detectPitchYIN, TUNINGS, centsOffFromPitch, findNearestGuitarString, getNoteFromFrequency,
-  assessTuningSafety, tensionRatio, AMBIGUOUS_MATCH_CENTS,
+  assessTuningSafety, tensionRatio, AMBIGUOUS_MATCH_CENTS, getTuningGuidance, InTuneConfirmer,
 } from '../services/tunerService.ts';
 
 // SAFETY-CRITICAL: people tune real instruments with this. A wrong reading can make
@@ -134,6 +134,44 @@ const errCents = (detected: number | null, target: number) => {
   assert.ok(Math.abs(tensionRatio(110, 110) - 1) < 1e-9, 'no change = no added tension');
   assert.ok(tensionRatio(110, 100) < 1, 'loosening reduces tension');
   assert.ok(AMBIGUOUS_MATCH_CENTS <= 250, 'ambiguity guard is tighter than half the gap between strings');
+}
+
+// ── guidance: flat means tighten, sharp means loosen (getting this backwards
+//    would make players tune the WRONG WAY, which is the unsafe direction) ──
+{
+  const flat = getTuningGuidance(-30);
+  assert.equal(flat.action, 'tighten', 'flat → tighten');
+  assert.match(flat.pegHint, /away from you/, 'flat → turn peg away (raises pitch)');
+
+  const sharp = getTuningGuidance(+30);
+  assert.equal(sharp.action, 'loosen', 'sharp → loosen');
+  assert.match(sharp.pegHint, /toward you/, 'sharp → turn peg toward you (lowers pitch)');
+
+  assert.equal(getTuningGuidance(0).action, 'in-tune', 'dead on = in tune');
+  assert.equal(getTuningGuidance(3).action, 'in-tune', 'within tolerance = in tune');
+  assert.equal(getTuningGuidance(-3).action, 'in-tune', 'within tolerance both sides');
+
+  assert.equal(getTuningGuidance(-60).magnitude, 'large', 'way off = large');
+  assert.equal(getTuningGuidance(-20).magnitude, 'small', 'moderately off = small');
+  assert.equal(getTuningGuidance(-8).magnitude, 'tiny', 'nearly there = tiny');
+}
+
+// ── in-tune must be HELD before we declare success ──
+{
+  const c = new InTuneConfirmer(700);
+  assert.equal(c.update(true, 1000), false, 'not confirmed on the first in-tune frame');
+  assert.equal(c.update(true, 1400), false, 'not confirmed at 400ms');
+  assert.ok(c.progress(1400) > 0.4 && c.progress(1400) < 1, 'progress ramps for the UI ring');
+  assert.equal(c.update(true, 1750), true, 'confirmed after holding 700ms');
+
+  // Drifting out resets the hold — a string that sweeps through pitch must not
+  // register as tuned.
+  const d = new InTuneConfirmer(700);
+  d.update(true, 0);
+  d.update(false, 300);
+  assert.equal(d.update(true, 800), false, 'drifting out restarts the hold');
+  assert.equal(d.progress(800), 0, 'progress resets too');
+  assert.equal(d.update(true, 1600), true, 'confirms once it holds again');
 }
 
 console.log('tuner tests passed');

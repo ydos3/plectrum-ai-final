@@ -178,6 +178,57 @@ const parabolicInterpolate = (buffer: Float32Array, tau: number) => {
 
 export const detectPitch = detectPitchYIN;
 
+// ── Guidance + confirmation (UI logic, kept pure so it is unit-tested) ───────
+
+export interface TuningGuidance {
+    /** What the player should physically do. */
+    action: 'tighten' | 'loosen' | 'in-tune';
+    /** Plain-language instruction. */
+    text: string;
+    /** Peg direction, per standard guitar guidance. */
+    pegHint: string;
+    /** How far off, in coarse buckets, for UI emphasis. */
+    magnitude: 'tiny' | 'small' | 'large';
+}
+
+/**
+ * Turn a cents offset into a physical instruction. Flat = string too loose =
+ * tighten. Standard guidance: turning the peg away from you raises pitch.
+ */
+export const getTuningGuidance = (cents: number): TuningGuidance => {
+    const abs = Math.abs(cents);
+    if (abs <= IN_TUNE_THRESHOLD_CENTS) {
+        return { action: 'in-tune', text: 'In tune', pegHint: 'Hold it there', magnitude: 'tiny' };
+    }
+    const magnitude: TuningGuidance['magnitude'] = abs > 40 ? 'large' : abs > 15 ? 'small' : 'tiny';
+    return cents < 0
+        ? { action: 'tighten', text: 'Too flat — tighten', pegHint: 'Turn the peg away from you', magnitude }
+        : { action: 'loosen', text: 'Too sharp — loosen', pegHint: 'Turn the peg toward you', magnitude };
+};
+
+/**
+ * A note must STAY in tune briefly before we declare success — a plucked string
+ * sweeps through the target as it settles, so an instant "in tune" is often a
+ * false positive that leaves the player slightly off.
+ */
+export class InTuneConfirmer {
+    private since: number | null = null;
+    private holdMs: number;
+    constructor(holdMs = 700) { this.holdMs = holdMs; }
+    reset(): void { this.since = null; }
+    /** @returns true only once the reading has been in tune for holdMs. */
+    update(isInTune: boolean, nowMs: number): boolean {
+        if (!isInTune) { this.since = null; return false; }
+        if (this.since === null) { this.since = nowMs; return false; }
+        return nowMs - this.since >= this.holdMs;
+    }
+    /** 0..1 progress toward confirmation, for a progress ring. */
+    progress(nowMs: number): number {
+        if (this.since === null) return 0;
+        return Math.max(0, Math.min(1, (nowMs - this.since) / this.holdMs));
+    }
+}
+
 export const getNoteFromFrequency = (
     frequency: number,
     tuning = TUNINGS.Standard,
